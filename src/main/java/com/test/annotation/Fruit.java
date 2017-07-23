@@ -10,6 +10,6 @@ import java.lang.annotation.*;
 @Target({ElementType.METHOD})
 public @interface Fruit {
 
-    String name();
+    String name() default "";
 
 }

@@ -27,5 +27,6 @@ public class FruitAspect {
         String xx = fruit.name();
         System.out.println("=========================水果："+xx+"================");
         pjp.proceed();
+        System.out.println("=========================end："+xx+"================");
     }
 }
