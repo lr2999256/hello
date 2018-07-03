@@ -17,6 +17,8 @@ import org.springframework.test.context.junit4.SpringRunner;
 import javax.annotation.Resource;
 import java.lang.reflect.Proxy;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by Rui on 2017/7/5.
@@ -112,5 +114,95 @@ public class ApplicationTest {
 
         String toJsonStr = JSON.toJSON(testDTO).toString();
         System.out.println(toJsonStr);
+    }
+
+    @Test
+    public void testFormat() throws Exception{
+        String dateStr = "20180317145120";
+
+        StringBuffer stringBuffer = new StringBuffer();
+        stringBuffer.append(dateStr.substring(0,4)).append("-");
+        stringBuffer.append(dateStr.substring(4,6)).append("-");
+        stringBuffer.append(dateStr.substring(6,8)).append(" ");
+        stringBuffer.append(dateStr.substring(8,10)).append(":");
+        stringBuffer.append(dateStr.substring(10,12)).append(":");
+        stringBuffer.append(dateStr.substring(12,14));
+
+        System.out.println(stringBuffer.toString());
+
+        String timeStr = "145120";
+        stringBuffer = new StringBuffer();
+        stringBuffer.append(timeStr.substring(0,2)).append(":");
+        stringBuffer.append(timeStr.substring(2,4)).append(":");
+        stringBuffer.append(timeStr.substring(4,6));
+
+        String time = "03";
+        int abc = Integer.parseInt(time);
+        System.out.print(abc);
+        System.out.println(stringBuffer.toString());
+
+        String starttime = "092000";
+        String bcd = starttime.substring(0,5)+"1";
+        System.out.print(bcd);
+    }
+
+    @Test
+    public void testGetTime() throws Exception{
+        double aaa = (-89.00)/(149.00);
+        int value1 = 5;
+        int value2 = (value1*-1);
+        List<String> list = new ArrayList<>();
+        //处罚(IP黑名单)
+        for (int i = 0; i < list.size(); i++) {
+            //防重
+            String abc = list.get(i);
+        }
+
+        String a1 = "1219051930476";
+        String a2 = "1219032742775";
+        double d1 = Double.parseDouble(a1);
+        double d2 = Double.parseDouble(a2);
+        double tmp = (d1-d2)/1024/1024;
+
+
+        int a = -9;
+        int b = 11;
+        double ab = (double)a/(double) b;
+        int value = (int) (ab*100);
+        System.out.print(ab);
+
+        double[] datas = new double[2];
+        Pattern p = Pattern.compile("[^0-9]");
+
+        String abc = "  eth0: 1219139450736 6316310674    0    0    0     0          0      8086 3321104342698 6960296382    0    0    0     0       0          0";
+        Matcher m = p.matcher(abc);
+        String str = m.replaceAll(" ").trim().replaceAll(" {2,}", " ");
+        String[] array = str.split(" ");
+        datas[0] += Double.parseDouble(array[2]);//收到流量
+        datas[1] += Double.parseDouble(array[10]);//发出流量
+
+
+
+        String dateStr = "092000";
+        for(int i=0;i<60;i++) {
+            if(i<10){
+                dateStr = "090"+i+"33";
+            }else{
+                dateStr = "09"+i+"33";
+            }
+            String subStr = dateStr.substring(2, 4);
+
+            int minute = Integer.parseInt(subStr);
+
+            int count = minute / 5;
+            String getTime;
+            if (count <= 1) {
+                getTime = dateStr.substring(0, 2) + "0" + count * 5 + dateStr.substring(4, 6);
+            } else {
+                getTime = dateStr.substring(0, 2) + count * 5 + dateStr.substring(4, 6);
+            }
+
+            System.out.println(getTime);
+        }
     }
 }
