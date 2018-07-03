@@ -7,6 +7,6 @@ package com.test.bean;
  **/
 public class Test {
     public void testBranch(){
-
+        System.out.print("abc");
     }
 }
