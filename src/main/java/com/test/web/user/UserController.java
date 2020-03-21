@@ -1,5 +1,6 @@
 package com.test.web.user;
 
+import com.test.config.ResultNotifyThread;
 import com.test.persistence.beans.TTestUser;
 import com.test.persistence.mappers.TTestUserMapper;
 import com.test.vo.UserVo;
@@ -9,8 +10,11 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseBody;
 
+import javax.annotation.Resource;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Created by Rui on 2017/5/27.
@@ -20,6 +24,8 @@ import java.util.List;
 public class UserController {
     @Autowired
     private TTestUserMapper tTestUserMapper;
+    @Resource
+    private ExecutorService ctoResultNotifyThreadPool;
 
     @RequestMapping("list")
     public String list(UserVo vo,Model model) {
@@ -40,6 +46,15 @@ public class UserController {
         model.addAttribute("users",users);
         model.addAttribute("vo",vo);
         return "user/list";
+    }
+
+    @RequestMapping("test")
+    @ResponseBody
+    public void test(){
+        for (int i=0;i< 50;i++) {
+            ctoResultNotifyThreadPool.submit(new ResultNotifyThread());
+        }
+        System.out.println("结束！！！");
     }
 
     @RequestMapping("add")

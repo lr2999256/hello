@@ -6,9 +6,17 @@ import com.test.bean.SimpleKYCUpdateData;
 import com.test.bean.TestDTO;
 import com.test.bean.UpdateOrganizationContactDetails;
 import com.test.bean.UpdateProductsData;
+import com.test.config.ResultNotifyThread;
+import com.test.idgenerate.IdGenUtils;
+import com.test.idgenerate.IdGenerator;
+import com.test.lock.RedisLock;
+import com.test.lock.RedisLock2;
 import com.test.proxy.Calculate;
 import com.test.proxy.ProxyCalculate;
 import com.test.util.ExtensionLoader;
+import java.time.LocalDateTime;
+import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,8 +25,12 @@ import org.springframework.test.context.junit4.SpringRunner;
 import javax.annotation.Resource;
 import java.lang.reflect.Proxy;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4;
 
 /**
  * Created by Rui on 2017/7/5.
@@ -28,9 +40,16 @@ import java.util.regex.Pattern;
 public class ApplicationTest {
     @Resource
     FruitFunction fruitFunction;
+    @Resource
+    private ExecutorService ctoResultNotifyThreadPool;
+    @Resource
+    private RedisLock redisLock;
+    @Resource
+    private RedisLock2 redisLock2;
 
     @Test
     public void test(){
+        int arr2[][] = new int[3][4];
         fruitFunction.eatFruit();
     }
 
@@ -205,4 +224,54 @@ public class ApplicationTest {
             System.out.println(getTime);
         }
     }
+
+    @Test
+    public void test2() throws Exception{
+        int abc = -17;
+        String abc1 = abc+"";
+        Integer abc2 = (Integer)abc;
+        System.out.println(StringEscapeUtils.unescapeHtml4("0f88bfcbcaf802eced9488691a9df4c5ff0b51b0a946beadf8045e8129ca52d6," +
+                "                                                 f06f555e664bcc5a302fda4a96b6f4ec6de1f4071618805293079558794dc0aa"));
+    }
+
+    @Test
+    public void testlua() throws Exception{
+        while (true) {
+            Long id = IdGenUtils.generateId("ABC");
+            System.out.println("id="+id);
+            Thread.sleep(10000);
+        }
+    }
+
+    @Test
+    public void testThreadPool() throws  Exception {
+        for (int i=0;i< 50;i++) {
+            ctoResultNotifyThreadPool.submit(new ResultNotifyThread());
+        }
+        System.out.println("结束！！！");
+        Thread.sleep(100000000);
+    }
+
+    @Test
+    public void lock() throws Exception {
+        for(int i=0;i<10;i++){
+            Thread thread =new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if(redisLock2.tryLock("redisLock", 1000, 2000, TimeUnit.MILLISECONDS)){
+                            System.out.println(Thread.currentThread()+"我获取到锁了！当前时间:"+LocalDateTime.now());
+                        } else {
+                            System.out.println(Thread.currentThread()+"我获取到锁失败！当前时间:"+LocalDateTime.now());
+                        }
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            },"Thread-"+i);
+            thread.start();
+        }
+        Thread.currentThread().join();
+    }
+
 }

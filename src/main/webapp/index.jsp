@@ -6,5 +6,6 @@
 </head>
 <body>
     hello,World!<a href="<c:url value='/user/list'/>">列表</a>
+    test!<a href="<c:url value='/user/test'/>">test</a>
 </body>
 </html>
