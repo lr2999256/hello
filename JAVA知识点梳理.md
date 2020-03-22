@@ -1,10 +1,6 @@
-
-
-[TOC]
-
 # JAVA基础部分
 
-## JVM部分
+## JVM
 
 ### JVM的内存模型
 
@@ -293,3 +289,96 @@ public class StringIntern {
 下面其中垃圾回收器是基于HotSpot虚拟机。
 
 ![垃圾回收器.png](./pic/垃圾回收器.png)
+
+## JAVA 集合
+
+​	java集合是我们经常需要用到一个辅助工具，深入的了解集合以及集合的用法可以更快的帮助我们编写程序，编写效率更高，性能更好的程序。深入的理解JAVA集合是很有必要的一件事情。
+
+> 数组和集合的比较
+>
+> ​	数组不是面向对象的，存在明显的缺陷，集合弥补了数组的缺点，比数组更灵活更实用，而且不同的集合框架类可适用不同场合。如下：
+>
+> 1. 数组能存放基本数据类型和对象，而集合类存放的都是对象，集合类不能存放基本数据类型。数组和集合存放的对象皆为对象的引用地址。
+> 2. 数组容易固定无法动态改变，集合类容量动态改变。
+> 3. 数组无法判断其中实际存有多少元素，length只告诉了数组的容量，而集合的size()可以确切知道元素的个数
+> 4. 集合有多种实现方式和不同适用场合，不像数组仅采用顺序表方式
+> 5. 集合以类的形式存在，具有封装、继承、多态等类的特性，通过简单的方法和属性即可实现各种复杂操作，大大提高了软件的开发效率
+
+​	JAVA的集合框架由两大家族组成。分别是**Collection**家族和**Map**家族。下图展示了集合的框架结构。
+
+​	![集合架构图](./pic/集合架构图.png)
+
+### Collection
+
+​	Java标准库自带的`java.util`包提供了集合类：`Collection`，它是除`Map`外所有其他集合类的根接口。Java的`java.util`包主要提供了以下三种类型的集合：
+
+- `List`：一种排列有序、可以重发的的集合；
+- `Set`：一种无序，但保证没有重复元素的集合；
+- `Queue`：一种先进先出、排列有序的，可以重复的队列集合。
+
+```java
+public interface Collection<E> extends Iterable<E> {
+    //获取集合中的数量，如果超过了Integer.MAX_VALUE，则返回Integer.MAX_VALUE
+    int size();
+	//集合为空则返回true
+    boolean isEmpty();
+	//判断集合是否包含了元素，包含返回true
+    boolean contains(Object var1);
+	//返回一个迭代器
+    Iterator<E> iterator();
+	//返回一个顺序性对象数组
+    Object[] toArray();
+	//返回一个指定类型的数组
+    <T> T[] toArray(T[] var1);
+	//在List结尾添加一个元素
+    boolean add(E var1);
+	//移除第一个匹配的元素
+    boolean remove(Object var1);
+	//判断是否包含了集合内的全部元素
+    boolean containsAll(Collection<?> var1);
+	//添加集合内所有元素
+    boolean addAll(Collection<? extends E> var1);
+	//移除参数中集合内的匹配到的所有元素
+    boolean removeAll(Collection<?> var1);
+	//Lambda表达式的过滤器，匹配到了过滤器则移除
+    default boolean removeIf(Predicate<? super E> var1) {
+        Objects.requireNonNull(var1);
+        boolean var2 = false;
+        Iterator var3 = this.iterator();
+
+        while(var3.hasNext()) {
+            if (var1.test(var3.next())) {
+                var3.remove();
+                var2 = true;
+            }
+        }
+
+        return var2;
+    }
+	//只保留匹配到参数中的集合元素
+    boolean retainAll(Collection<?> var1);
+	//清空集合
+    void clear();
+	//equals方法
+    boolean equals(Object var1);
+	//hashCode方法
+    int hashCode();
+	//返回分割器
+    default Spliterator<E> spliterator() {
+        return Spliterators.spliterator(this, 0);
+    }
+	//返回流，配合分割器做迭代用
+    default Stream<E> stream() {
+        return StreamSupport.stream(this.spliterator(), false);
+    }
+	//返回并发流，配合分割器做迭代用
+    default Stream<E> parallelStream() {
+        return StreamSupport.stream(this.spliterator(), true);
+    }
+}
+
+```
+
+#### List
+
+​	
