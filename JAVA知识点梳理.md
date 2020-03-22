@@ -381,4 +381,333 @@ public interface Collection<E> extends Iterable<E> {
 
 #### List
 
-​	
+​	List集合为列表类型，以线性方式存储对象。List集合中的元素允许重复，各元素的顺序就是对象插入的顺序。用户可以通过使用**索引**来访问List集合中的元素。**List集合的特点就是存取有序，可以存储重复的元素，可以用下标进行元素的操作。**
+
+​	List中几个重要的方法
+
+| 方法                                      | 说明                                                         |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| void add（int index，Object obj）         | 将obj插入调用列表，插入位置的下标由index传递。任何已存在的，在插入点以及插入点以后的元素将前移，因此没有元素被覆写。 |
+| Boolean addAll（int index，Collection c） | 将c中的所有元素插入到调用列表中，插入点的下标由index传递。   |
+| Object get（int index）                   | 返回指定下标的对象                                           |
+| Object set（int index，Object obj）       | 对由index指定的位置进行赋值                                  |
+| int indexOf（Object obj）                 | 返回调用列表obj的第一个实例的下标。如果obj不是列表元素，返回-1. |
+
+##### ArrayList
+
+​	ArrayList支持可随需要而增长的动态数组。在Java数组中，长度是固定的，因此在数组被创建后，不能修改长度，这意味着开发者需要实现知道数组的长度。但在一般情况下，只有在运行时才知道数组长度。为了解决这个问题，ArrayList因此而生。下面分析以下ArrayList的几个重点方法。
+
+1. 构造方法
+
+```java 
+//继承了AbstractList，实现了List接口，RandomAccess随机访问接口，Cloneable接口，序列化接口
+public class ArrayList<E> extends AbstractList<E>
+        implements List<E>, RandomAccess, Cloneable, java.io.Serializable{
+    //指定大小构造一个ArrayList的内部数组
+    public ArrayList(int var1) {
+        if (var1 > 0) {
+            this.elementData = new Object[var1];
+        } else {
+            if (var1 != 0) {
+                throw new IllegalArgumentException("Illegal Capacity: " + var1);
+            }
+            this.elementData = EMPTY_ELEMENTDATA;
+        }
+    }
+    //按照默认容量来构造一个数组，默认大小为10
+    public ArrayList() {
+        this.elementData = DEFAULTCAPACITY_EMPTY_ELEMENTDATA;
+    }
+    //根据集合来构造一个ArrayList数组
+    public ArrayList(Collection<? extends E> var1) {
+        this.elementData = var1.toArray();
+        if ((this.size = this.elementData.length) != 0) {
+            if (this.elementData.getClass() != Object[].class) {
+                this.elementData = Arrays.copyOf(this.elementData, this.size, Object[].class);
+            }
+        } else {
+            //集合元素为空则创建默认容量为10的数组
+            this.elementData = EMPTY_ELEMENTDATA;
+        }
+    }
+｝
+```
+
+2. 新增操作
+
+```java
+//新增一个元素
+public boolean add(E var1) {
+    this.ensureCapacityInternal(this.size + 1);
+    this.elementData[this.size++] = var1;
+    return true;
+}
+//在指定位置新增
+public void add(int var1, E var2) {
+    this.rangeCheckForAdd(var1);
+    this.ensureCapacityInternal(this.size + 1);
+    System.arraycopy(this.elementData, var1, this.elementData, var1 + 1, this.size - var1);
+    this.elementData[var1] = var2;
+    ++this.size;
+}
+//确保容量，不够需要扩容
+private void ensureCapacityInternal(int var1) {
+    this.ensureExplicitCapacity(calculateCapacity(this.elementData, var1));
+}
+//确保容量，不够需要扩容
+private void ensureExplicitCapacity(int var1) {
+    //修改次数+1
+    ++this.modCount;
+    if (var1 - this.elementData.length > 0) {
+        this.grow(var1);
+    }
+}
+//扩容函数
+private void grow(int var1) {
+    int var2 = this.elementData.length;
+    //默认扩容原容量的一半
+    int var3 = var2 + (var2 >> 1);
+    if (var3 - var1 < 0) {
+        var3 = var1;
+    }
+    if (var3 - 2147483639 > 0) {
+        var3 = hugeCapacity(var1);
+    }
+    this.elementData = Arrays.copyOf(this.elementData, var3);
+}
+```
+
+```java
+/**
+ *
+ * @param  src      the source array. 来源数组
+ * @param  srcPos   starting position in the source array. 从来源数组开始拷贝的位置
+ * @param  dest     the destination array.	目标数组
+ * @param  destPos  starting position in the destination data.	目标数组开始的位置
+ * @param  length   the number of array elements to be copied. 需要拷贝的来源的位置
+ */
+public static native void arraycopy(Object src,  int  srcPos, Object dest, int destPos, int length);
+```
+
+> copy数组可以使用`System.arraycopy`和`Arrays.copyOf`方法，`System.arraycopy`是`native`方法，而`Arrays`是一个工具类，在调用`copyOf`的时候，实际也还是调用了`System.arraycopy`，只是包装了一下，使用起来更加的简单和方便。
+
+3. 删除操作
+```java 
+public E remove(int index) {
+    rangeCheck(index);
+    modCount++;
+    //获取需要移除的元素
+    E oldValue = elementData(index);
+    int numMoved = size - index - 1;
+    if (numMoved > 0)
+        System.arraycopy(elementData, index+1, elementData, index,
+                         numMoved);
+    elementData[--size] = null; // clear to let GC do its work
+    return oldValue;
+}
+public boolean remove(Object o) {
+    if (o == null) {
+        for (int index = 0; index < size; index++)
+            if (elementData[index] == null) {
+                fastRemove(index);
+                return true;
+            }
+    } else {
+        for (int index = 0; index < size; index++)
+            if (o.equals(elementData[index])) {
+                fastRemove(index);
+                return true;
+            }
+    }
+    return false;
+}
+private void fastRemove(int index) {
+    modCount++;
+    int numMoved = size - index - 1;
+    if (numMoved > 0)
+        System.arraycopy(elementData, index+1, elementData, index,
+                         numMoved);
+    elementData[--size] = null; // clear to let GC do its work
+}
+```
+
+4. 更改操作
+
+```java
+public E set(int index, E element) {
+    rangeCheck(index);
+	//获取旧的值
+    E oldValue = elementData(index);
+    //赋值新值
+    elementData[index] = element;
+    return oldValue;
+}
+//校验长度范围
+private void rangeCheck(int index) {
+    if (index >= size)
+        throw new IndexOutOfBoundsException(outOfBoundsMsg(index));
+}
+```
+
+5. 查找操作
+
+```java
+public E get(int index) {
+    rangeCheck(index);
+    //直接返回位置的元素
+    return elementData(index);
+}
+```
+
+6. 总结
+
+- ArrayList自己实现了序列化和反序列化的方法
+- ArrayList基于数组方式实现，无容量的限制（会扩容）。添加元素时可能要扩容（所以最好预判一下），删除元素时不会减少容量（若希望减少容量，trimToSize()），删除元素时，将删除掉的位置元素置为null，下次gc就会回收这些元素所占的内存空间。
+- 线程不安全，会出现fall-fail。
+- add(int index, E element)：添加元素到数组中指定位置的时候，需要将该位置及其后边所有的元素都整块向后复制一位
+- get(int index)：获取指定位置上的元素时，可以通过索引直接获取（O(1)）
+- remove(Object o)需要遍历数组
+- remove(int index)不需要遍历数组，只需判断index是否符合条件即可，效率比remove(Object o)高
+- contains(E)需要遍历数组
+- 使用iterator遍历可能会引发多线程异常
+
+##### LinkedList
+
+​	LinkedList基于链表实现的，从源码可以看出是一个双向链表。双向链表适用于增删频繁且查询不频繁的场景，线程不安全的且适用于单线程（这点和ArrayList很像）。直接父类是AbstractSequentialList，不实现RandomAccess接口，不支持随机访问。AbstractSequentialList这个抽象类实现了最基本的顺序访问功能，虽然支持随机访问的也支持顺序访问，但是一般设计上还是会把它们两个当成无关联的两个特性。所以当利用随机访问特性时优先extends AbstractList而不是此类，当然实现此类也可以，只是没必要。
+
+1. 构造方法
+
+```java
+//特别注意这个继承的是AbstractSequentialList，它没有实现RandomAccess接口
+public class LinkedList<E>
+    extends AbstractSequentialList<E>
+    implements List<E>, Deque<E>, Cloneable, java.io.Serializable {
+	
+    public LinkedList() {
+    }
+
+    //根据集合构造
+    public LinkedList(Collection<? extends E> c) {
+        this();
+        addAll(c);
+    }
+｝
+```
+
+2. 新增操作
+
+```java
+//默认在最尾端新增一个Node节点，即添加元素
+public boolean add(E e) {
+    linkLast(e);
+    return true;
+}
+void linkLast(E e) {
+    final Node<E> l = last;
+    final Node<E> newNode = new Node<>(l, e, null);
+    last = newNode;
+    if (l == null)
+        first = newNode;
+    else
+        l.next = newNode;
+    size++;
+    modCount++;
+}
+```
+
+3. 删除操作
+
+```java
+public E remove(int index) {
+    checkElementIndex(index);
+    return unlink(node(index));
+}
+private void checkElementIndex(int index) {
+    if (!isElementIndex(index))
+        throw new IndexOutOfBoundsException(outOfBoundsMsg(index));
+}
+//解掉关联信息，名字也可以看出来，unlink
+E unlink(Node<E> x) {
+    // assert x != null;
+    final E element = x.item;
+    final Node<E> next = x.next;
+    final Node<E> prev = x.prev;
+
+    if (prev == null) {
+        first = next;
+    } else {
+        prev.next = next;
+        x.prev = null;
+    }
+
+    if (next == null) {
+        last = prev;
+    } else {
+        next.prev = prev;
+        x.next = null;
+    }
+
+    x.item = null;
+    size--;
+    modCount++;
+    return element;
+}
+```
+
+4. 更改操作
+
+```java
+public E set(int index, E element) {
+    checkElementIndex(index);
+    Node<E> x = node(index);
+    E oldVal = x.item;
+    x.item = element;
+    return oldVal;
+}
+```
+
+5. 查找操作
+
+```java
+public E get(int index) {
+    checkElementIndex(index);
+    return node(index).item;
+}
+//2分法进行查找
+Node<E> node(int index) {
+    // assert isElementIndex(index);
+    if (index < (size >> 1)) {
+        Node<E> x = first;
+        for (int i = 0; i < index; i++)
+            x = x.next;
+        return x;
+    } else {
+        Node<E> x = last;
+        for (int i = size - 1; i > index; i--)
+            x = x.prev;
+        return x;
+    }
+}
+```
+
+6. 总结
+
+- LinkedList 是双向列表，链表批量增加，是靠for循环遍历原数组，依次执行插入节点操作。
+- ArrayList基于数组， LinkedList基于双向链表，对于随机访问， ArrayList比较占优势，但LinkedList插入、删除元素比较快，因为只要调整指针的指向。针对特定位置需要遍历时，所以LinkedList在随机访问元素的话比较慢。
+- LinkedList没有实现自己的 Iterator，使用的是 ListIterator。
+- LinkedList需要更多的内存，因为 ArrayList的每个索引的位置是实际的数据，而 LinkedList中的每个节点中存储的是实际的数据和前后节点的位置。
+- LinkedList也是非线程安全的，只有在单线程下才可以使用。为了防止非同步访问，Collections类里面提供了synchronizedList()方法。
+
+#####  Vector
+
+​	Vector 是**矢量队列**，它是JDK1.0版本添加的类。继承于AbstractList，实现了List, RandomAccess, Cloneable这些接口。
+
+​	Vector 继承了AbstractList，实现了List；所以，**它是一个队列，支持相关的添加、删除、修改、遍历等功能**。
+
+​	Vector 实现了RandmoAccess接口，即**提供了随机访问功能**。RandmoAccess是java中用来被List实现，为List提供快速访问功能的。在Vector中，我们即可以通过元素的序号快速获取元素对象；这就是快速随机访问。
+
+​	Vector 实现了Cloneable接口，即实现clone()函数。它能被克隆。
+
+​	和ArrayList不同，**Vector中的操作是线程安全的**。  
+
+总结：和ArrayList差不多，但是它是线程安全的。
