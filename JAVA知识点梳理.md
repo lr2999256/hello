@@ -132,8 +132,8 @@ public class StringIntern {
 
 ​	特点为：
 
-	- 适合存活对象多，垃圾少的情况
-	- 需要整理的过程
+- 适合存活对象多，垃圾少的情况
+- 需要整理的过程
 
 ##### 复制
 
@@ -378,6 +378,8 @@ public interface Collection<E> extends Iterable<E> {
 }
 
 ```
+
+
 
 #### List
 
@@ -711,3 +713,1388 @@ Node<E> node(int index) {
 ​	和ArrayList不同，**Vector中的操作是线程安全的**。  
 
 总结：和ArrayList差不多，但是它是线程安全的。
+
+### Map
+
+​	Map与List和Set接口不同，它是由键值对组成的集合，提供了Key-value的映射，同时他不继承Collection，保证key-value的一一对应，他不存在相同的key值，但是value值可以相同。
+
+```java
+package java.util;
+
+import java.io.Serializable;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+public interface Map<K, V> {
+    //返回key-value对的数量，如果超过了Integer.MAX_VALUE则返回Integer.MAX_VALUE
+    int size();
+	//判断Map是否为空，为空返回true
+    boolean isEmpty();
+	//判断是否包含了key值
+    boolean containsKey(Object var1);
+	//判断是否包含了value值
+    boolean containsValue(Object var1);
+	//通过key获取value值
+    V get(Object var1);
+	//放入key-value对，如果key是存在的，返回之前老的值，否则返回空
+    V put(K var1, V var2);
+	//根据key移除key-value对，如果key是存在的，返回之前老的值，否则返回空
+    V remove(Object var1);
+	//批量插入集合
+    void putAll(Map<? extends K, ? extends V> var1);
+	//清理集合
+    void clear();
+	//返回key的集合，因为key是不能重复的，所以采用的是Set
+    Set<K> keySet();
+	//返回value的集合
+    Collection<V> values();
+	//返回key-value键值对集合
+    Set<Map.Entry<K, V>> entrySet();
+	//equals方法
+    boolean equals(Object var1);
+	//hashCode方法
+    int hashCode();
+	//获取key的值，如果没有，返回传入的value值
+    default V getOrDefault(Object var1, V var2) {
+        Object var3;
+        return (var3 = this.get(var1)) == null && !this.containsKey(var1) ? var2 : var3;
+    }
+	//根据Lambda表达式的循环处理
+    default void forEach(BiConsumer<? super K, ? super V> var1) {
+        Objects.requireNonNull(var1);
+
+        Object var4;
+        Object var5;
+        for(Iterator var2 = this.entrySet().iterator(); var2.hasNext(); var1.accept(var4, var5)) {
+            Map.Entry var3 = (Map.Entry)var2.next();
+
+            try {
+                var4 = var3.getKey();
+                var5 = var3.getValue();
+            } catch (IllegalStateException var7) {
+                throw new ConcurrentModificationException(var7);
+            }
+        }
+
+    }
+	//根据Lambda表达式的replaceAll
+    default void replaceAll(BiFunction<? super K, ? super V, ? extends V> var1) {
+        Objects.requireNonNull(var1);
+        Iterator var2 = this.entrySet().iterator();
+
+        while(var2.hasNext()) {
+            Map.Entry var3 = (Map.Entry)var2.next();
+
+            Object var4;
+            Object var5;
+            try {
+                var4 = var3.getKey();
+                var5 = var3.getValue();
+            } catch (IllegalStateException var8) {
+                throw new ConcurrentModificationException(var8);
+            }
+
+            var5 = var1.apply(var4, var5);
+
+            try {
+                var3.setValue(var5);
+            } catch (IllegalStateException var7) {
+                throw new ConcurrentModificationException(var7);
+            }
+        }
+
+    }
+	//如果key不存在则put,否则就返回以前的值
+    default V putIfAbsent(K var1, V var2) {
+        Object var3 = this.get(var1);
+        if (var3 == null) {
+            var3 = this.put(var1, var2);
+        }
+        return var3;
+    }
+	//revome指定的key-value的值
+    default boolean remove(Object var1, Object var2) {
+        Object var3 = this.get(var1);
+        if (Objects.equals(var3, var2) && (var3 != null || this.containsKey(var1))) {
+            this.remove(var1);
+            return true;
+        } else {
+            return false;
+        }
+    }
+	//如果key-var2存在，则将var2替换var3
+    default boolean replace(K var1, V var2, V var3) {
+        Object var4 = this.get(var1);
+        if (Objects.equals(var4, var2) && (var4 != null || this.containsKey(var1))) {
+            this.put(var1, var3);
+            return true;
+        } else {
+            return false;
+        }
+    }
+	//如果key，则把替换成var2的值
+    default V replace(K var1, V var2) {
+        Object var3;
+        if ((var3 = this.get(var1)) != null || this.containsKey(var1)) {
+            var3 = this.put(var1, var2);
+        }
+
+        return var3;
+    }
+
+    default V computeIfAbsent(K var1, Function<? super K, ? extends V> var2) {
+        Objects.requireNonNull(var2);
+        Object var3;
+        Object var4;
+        if ((var3 = this.get(var1)) == null && (var4 = var2.apply(var1)) != null) {
+            this.put(var1, var4);
+            return var4;
+        } else {
+            return var3;
+        }
+    }
+	
+    default V computeIfPresent(K var1, BiFunction<? super K, ? super V, ? extends V> var2) {
+        Objects.requireNonNull(var2);
+        Object var3;
+        if ((var3 = this.get(var1)) != null) {
+            Object var4 = var2.apply(var1, var3);
+            if (var4 != null) {
+                this.put(var1, var4);
+                return var4;
+            } else {
+                this.remove(var1);
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+
+    default V compute(K var1, BiFunction<? super K, ? super V, ? extends V> var2) {
+        Objects.requireNonNull(var2);
+        Object var3 = this.get(var1);
+        Object var4 = var2.apply(var1, var3);
+        if (var4 == null) {
+            if (var3 == null && !this.containsKey(var1)) {
+                return null;
+            } else {
+                this.remove(var1);
+                return null;
+            }
+        } else {
+            this.put(var1, var4);
+            return var4;
+        }
+    }
+
+    default V merge(K var1, V var2, BiFunction<? super V, ? super V, ? extends V> var3) {
+        Objects.requireNonNull(var3);
+        Objects.requireNonNull(var2);
+        Object var4 = this.get(var1);
+        Object var5 = var4 == null ? var2 : var3.apply(var4, var2);
+        if (var5 == null) {
+            this.remove(var1);
+        } else {
+            this.put(var1, var5);
+        }
+
+        return var5;
+    }
+
+    public interface Entry<K, V> {
+        K getKey();
+
+        V getValue();
+
+        V setValue(V var1);
+
+        boolean equals(Object var1);
+
+        int hashCode();
+
+        static <K extends Comparable<? super K>, V> Comparator<Map.Entry<K, V>> comparingByKey() {
+            return (Comparator)((Serializable)((var0x, var1x) -> {
+                return ((Comparable)var0x.getKey()).compareTo(var1x.getKey());
+            }));
+        }
+
+        static <K, V extends Comparable<? super V>> Comparator<Map.Entry<K, V>> comparingByValue() {
+            return (Comparator)((Serializable)((var0x, var1x) -> {
+                return ((Comparable)var0x.getValue()).compareTo(var1x.getValue());
+            }));
+        }
+
+        static <K, V> Comparator<Map.Entry<K, V>> comparingByKey(Comparator<? super K> var0) {
+            Objects.requireNonNull(var0);
+            return (Comparator)((Serializable)((var1x, var2x) -> {
+                return var0.compare(var1x.getKey(), var2x.getKey());
+            }));
+        }
+
+        static <K, V> Comparator<Map.Entry<K, V>> comparingByValue(Comparator<? super V> var0) {
+            Objects.requireNonNull(var0);
+            return (Comparator)((Serializable)((var1x, var2x) -> {
+                return var0.compare(var1x.getValue(), var2x.getValue());
+            }));
+        }
+    }
+}
+```
+
+#### HashMap
+
+​	HashMap就是一个散列表，是基于哈希表的Map接口实现，它存储的内容是键值对 (key-value) 映射，并且键值允许为null(键的话只允许一个为null)。因为JDK1.7和JDK1.8的HashMap有很大的不同，所以现在对1.7和1.8分开介绍。
+
+##### 1.7版本的HashMap
+
+​	1.7版本的HashMap是数组+链表的形式，也就是所谓的"拉链法"。如下图所示。
+
+![拉链法.png](./pic/拉链法.png)
+
+​	下面对几个重点内容进行分析
+
+1. 构造函数
+
+```java
+// 1. 容量（capacity）： HashMap中数组的长度
+// a. 容量范围：必须是2的幂 & <最大容量（2的30次方）
+// b. 初始容量 = 哈希表创建时的容量
+// 默认容量 = 16 = 1<<4 = 00001中的1向左移4位 = 10000 = 十进制的2^4=16
+static final int DEFAULT_INITIAL_CAPACITY = 1 << 4;
+// 最大容量 =  2的30次方（若传入的容量过大，将被最大值替换）
+static final int MAXIMUM_CAPACITY = 1 << 30;
+
+// 2. 加载因子(Load factor)：HashMap在其容量自动增加前可达到多满的一种尺度
+// a. 加载因子越大、填满的元素越多 = 空间利用率高、但冲突的机会加大、查找效率变低（因为链表变长了）
+// b. 加载因子越小、填满的元素越少 = 空间利用率小、冲突的机会减小、查找效率高（链表不长）
+// 实际加载因子
+final float loadFactor;
+// 默认加载因子 = 0.75
+static final float DEFAULT_LOAD_FACTOR = 0.75f;
+
+// 3. 扩容阈值（threshold）：当哈希表的大小 ≥ 扩容阈值时，就会扩容哈希表（即扩充HashMap的容量） 
+// a. 扩容 = 对哈希表进行resize操作（即重建内部数据结构），从而哈希表将具有大约两倍的桶数
+// b. 扩容阈值 = 容量 x 加载因子
+int threshold;
+
+public HashMap(int initialCapacity, float loadFactor) {
+    if (initialCapacity < 0)
+        throw new IllegalArgumentException("Illegal initial capacity: " +
+                                           initialCapacity);
+    if (initialCapacity > MAXIMUM_CAPACITY)
+        initialCapacity = MAXIMUM_CAPACITY;
+    if (loadFactor <= 0 || Float.isNaN(loadFactor))
+        throw new IllegalArgumentException("Illegal load factor: " +
+                                           loadFactor);
+
+    // Find a power of 2 >= initialCapacity
+    int capacity = 1;
+    //从1开始不断乘以2，直到不小于初始容量的时候
+    while (capacity < initialCapacity)
+        capacity <<= 1;
+
+    this.loadFactor = loadFactor;
+    threshold = (int)Math.min(capacity * loadFactor, MAXIMUM_CAPACITY + 1);
+    table = new Entry[capacity];
+    useAltHashing = sun.misc.VM.isBooted() &&
+        (capacity >= Holder.ALTERNATIVE_HASHING_THRESHOLD);
+    init();
+}
+/**
+    默认0.75的载入因子	
+*/
+public HashMap(int initialCapacity) {
+    this(initialCapacity, DEFAULT_LOAD_FACTOR);
+}
+/**
+    默认16的容量，0.75的载入因子 
+ */
+public HashMap() {
+    this(DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR);
+}
+```
+
+2. get方法
+
+```java
+public V get(Object key) {
+    if (key == null)
+        return getForNullKey();
+    Entry<K,V> entry = getEntry(key);
+
+    return null == entry ? null : entry.getValue();
+}
+
+final Entry<K,V> getEntry(Object key) {
+    int hash = (key == null) ? 0 : hash(key);
+    //for循环往后查找
+    for (Entry<K,V> e = table[indexFor(hash, table.length)];
+         e != null;
+         e = e.next) {
+        Object k;
+        if (e.hash == hash &&
+            ((k = e.key) == key || (key != null && key.equals(k))))
+            return e;
+    }
+    return null;
+}
+
+static int indexFor(int h, int length) {
+    //因为length正好是2的次幂，所以length-1转2进制正好全都是1，与的话相当于取余数
+    return h & (length-1);
+}
+```
+
+3. put方法
+
+```java
+final int hash(Object k) {
+    int h = 0;
+    if (useAltHashing) {
+        if (k instanceof String) {
+            return sun.misc.Hashing.stringHash32((String) k);
+        }
+        h = hashSeed;
+    }
+
+    h ^= k.hashCode();
+
+    // This function ensures that hashCodes that differ only by
+    // constant multiples at each bit position have a bounded
+    // number of collisions (approximately 8 at default load factor).
+    // 做了9次扰动处理 = 4次位运算 + 5次异或运算
+    h ^= (h >>> 20) ^ (h >>> 12);
+    return h ^ (h >>> 7) ^ (h >>> 4);
+}
+
+public V put(K key, V value) {
+    if (key == null)
+        return putForNullKey(value);
+    //得到hash码
+    int hash = hash(key);
+    //计算在table中数组的位置
+    int i = indexFor(hash, table.length);
+    //循环遍历是否有相等的key,有的话直接赋值value
+    for (Entry<K,V> e = table[i]; e != null; e = e.next) {
+        Object k;
+        if (e.hash == hash && ((k = e.key) == key || key.equals(k))) {
+            V oldValue = e.value;
+            e.value = value;
+            e.recordAccess(this);
+            return oldValue;
+        }
+    }
+	//没有的话，修改次数+1
+    modCount++;
+    //新增一个Entry节点
+    addEntry(hash, key, value, i);
+    return null;
+}
+//新增一个Entry节点
+void addEntry(int hash, K key, V value, int bucketIndex) {
+    //size大小如果大于了容量*扰动因子
+    if ((size >= threshold) && (null != table[bucketIndex])) {
+        //扩容2倍的长度
+        resize(2 * table.length);
+        hash = (null != key) ? hash(key) : 0;
+        //重新计算位置
+        bucketIndex = indexFor(hash, table.length);
+    }
+    //真正创建Entry节点
+    createEntry(hash, key, value, bucketIndex);
+}
+//扩容
+void resize(int newCapacity) {
+    Entry[] oldTable = table;
+    int oldCapacity = oldTable.length;
+    if (oldCapacity == MAXIMUM_CAPACITY) {
+        threshold = Integer.MAX_VALUE;
+        return;
+    }
+	
+    Entry[] newTable = new Entry[newCapacity];
+    boolean oldAltHashing = useAltHashing;
+    useAltHashing |= sun.misc.VM.isBooted() &&
+        (newCapacity >= Holder.ALTERNATIVE_HASHING_THRESHOLD);
+    boolean rehash = oldAltHashing ^ useAltHashing;
+    transfer(newTable, rehash);
+    table = newTable;
+    //修改阈值
+    threshold = (int)Math.min(newCapacity * loadFactor, MAXIMUM_CAPACITY + 1);
+}
+//全部重新挪动，如果需要rehash还需要重新算位置
+void transfer(Entry[] newTable, boolean rehash) {
+    int newCapacity = newTable.length;
+    for (Entry<K,V> e : table) {
+        while(null != e) {
+            Entry<K,V> next = e.next;
+            if (rehash) {
+                //如果rehash了，位置会倒置，因为是头插入法
+                e.hash = null == e.key ? 0 : hash(e.key);
+            }
+            int i = indexFor(e.hash, newCapacity);
+            e.next = newTable[i];
+            newTable[i] = e;
+            e = next;
+        }
+    }
+}
+//真正创建Entry节点
+void createEntry(int hash, K key, V value, int bucketIndex) {
+    Entry<K,V> e = table[bucketIndex];
+    //e为next,所以是头插法，自己占用第一顺序位
+    //也正是头插法的这个原因，在多线程的情况会产生循环列表而导致死循环
+    table[bucketIndex] = new Entry<>(hash, key, value, e);
+    size++;
+}
+```
+
+##### 1.8版本的HashMap
+
+​	1.8版本的`HashMap`是数组+链表+红黑树的形式，提高了`HashMap`的性能。如下图所示。
+
+![拉链加红黑树.png](./pic/拉链加红黑树.png)
+
+​	下面介绍一下1.8的源码，主要看不同的部分。
+
+1. 构造函数
+
+```java
+public class HashMap<K,V> extends AbstractMap<K,V>
+    implements Map<K,V>, Cloneable, Serializable {
+	
+    /**
+     * The bin count threshold for using a tree rather than list for a
+     * bin.  Bins are converted to trees when adding an element to a
+     * bin with at least this many nodes. The value must be greater
+     * than 2 and should be at least 8 to mesh with assumptions in
+     * tree removal about conversion back to plain bins upon
+     * shrinkage.
+     */
+    //当数组下标后的节点大于等于8的时候，从链表转为红黑树
+    static final int TREEIFY_THRESHOLD = 8;
+
+	/**
+ 	* The bin count threshold for untreeifying a (split) bin during a
+     * resize operation. Should be less than TREEIFY_THRESHOLD, and at
+     * most 6 to mesh with shrinkage detection under removal.
+     */
+    //resize的时候，如果发现数组的下标后面的节点小于等于6，则解开红黑树，转为链表
+	static final int UNTREEIFY_THRESHOLD = 6;
+
+	/**
+     * The smallest table capacity for which bins may be treeified.
+     * (Otherwise the table is resized if too many nodes in a bin.)
+     * Should be at least 4 * TREEIFY_THRESHOLD to avoid conflicts
+     * between resizing and treeification thresholds.
+     */
+    //转红黑树的最小map的容量，低于这个容量，则先扩容，不是转树，避免效率过低
+    static final int MIN_TREEIFY_CAPACITY = 64;
+
+    public HashMap(int initialCapacity, float loadFactor) {
+        if (initialCapacity < 0)
+            throw new IllegalArgumentException("Illegal initial capacity: " +
+                                               initialCapacity);
+        if (initialCapacity > MAXIMUM_CAPACITY)
+            initialCapacity = MAXIMUM_CAPACITY;
+        if (loadFactor <= 0 || Float.isNaN(loadFactor))
+            throw new IllegalArgumentException("Illegal load factor: " +
+                                               loadFactor);
+        this.loadFactor = loadFactor;
+        //默认的threshold为2的n次幂，没有乘以扰动因子
+        this.threshold = tableSizeFor(initialCapacity);
+    }
+
+    /**
+     * Returns a power of two size for the given target capacity.
+    */
+    /*
+     * 举个例子：我们随便取个数，只关注这个数高位的1即可。
+     * 假设这个数的最高位一开始在第32bit.
+     * 即
+     * 1000 0000 0000 0000 0000 0000 0000 0000 (该数的其他bit是0还是1我们不管)
+     * var1>>>1为:
+     * 0100 0000 0000 0000 0000 0000 0000 0000
+     * 经过var1 |= var1 >>> 1 //取高位的1个1  就变成了
+     * 1100 0000 0000 0000 0000 0000 0000 0000 //现在变成了两个1
+     *  经过var1 |= var1 >>> 2;  //取高位的2个1 就变成了
+     * 1111 0000 0000 0000 0000 0000 0000 0000 //变成了4个1
+     * 以此类推，
+     * 取4个1
+     * 1111 1111 0000 0000 0000 0000 0000 0000
+     * 8个1
+     * 1111 1111 1111 1111 0000 0000 0000 0000
+     * 16个1
+     * 1111 1111 1111 1111 1111 1111 1111 1111 
+     * 这样我们就把32个bit全部替换成1了
+     * 最后加1就变成
+     * 0001 0000 0000 0000 0000 0000 0000 0000 0000
+     * 其他的数的计算过程也是如此，我们只关心var当前高位有多少个1即可。
+    */
+    static final int tableSizeFor(int cap) {
+        //2的次幂去移动，保证最高位为1
+        int n = cap - 1;
+        n |= n >>> 1;
+        n |= n >>> 2;
+        n |= n >>> 4;
+        n |= n >>> 8;
+        n |= n >>> 16;
+        return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;
+    }
+}
+```
+
+2. get方法
+
+```java
+public V get(Object key) {
+    Node<K,V> e;
+    return (e = getNode(hash(key), key)) == null ? null : e.value;
+}
+
+final Node<K,V> getNode(int hash, Object key) {
+    Node<K,V>[] tab; Node<K,V> first, e; int n; K k;
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        (first = tab[(n - 1) & hash]) != null) {
+        if (first.hash == hash && // always check first node
+            ((k = first.key) == key || (key != null && key.equals(k))))
+            return first;
+        if ((e = first.next) != null) {
+            if (first instanceof TreeNode)
+                //如果是红黑树的情况，遍历红黑树返回
+                return ((TreeNode<K,V>)first).getTreeNode(hash, key);
+            do {
+                //否红黑树，和拉链法一样的先找到数组下标，再往后寻找
+                if (e.hash == hash &&
+                    ((k = e.key) == key || (key != null && key.equals(k))))
+                    return e;
+            } while ((e = e.next) != null);
+        }
+    }
+    return null;
+}
+```
+
+3. put方法
+
+```java
+public V put(K key, V value) {
+    return putVal(hash(key), key, value, false, true);
+}
+final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
+                   boolean evict) {
+    Node<K,V>[] tab; Node<K,V> p; int n, i;
+    if ((tab = table) == null || (n = tab.length) == 0)
+        //第一次进来，就做resize，这里会算阈值，会capacity*loadFactor
+        n = (tab = resize()).length;
+    if ((p = tab[i = (n - 1) & hash]) == null)
+        //第一个节点
+        tab[i] = newNode(hash, key, value, null);
+    else {
+        Node<K,V> e; K k;
+        if (p.hash == hash &&
+            ((k = p.key) == key || (key != null && key.equals(k))))
+            e = p;
+        else if (p instanceof TreeNode)
+            e = ((TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
+        else {
+            for (int binCount = 0; ; ++binCount) {
+                if ((e = p.next) == null) {
+                    //尾节点插入
+                    p.next = newNode(hash, key, value, null);
+                    if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
+                        //总数大于等于7的时候，转换成红黑树，实际节点为8
+                        treeifyBin(tab, hash);
+                    break;
+                }
+                if (e.hash == hash &&
+                    ((k = e.key) == key || (key != null && key.equals(k))))
+                    break;
+                p = e;
+            }
+        }
+        if (e != null) { // existing mapping for key
+            V oldValue = e.value;
+            if (!onlyIfAbsent || oldValue == null)
+                e.value = value;
+            afterNodeAccess(e);
+            return oldValue;
+        }
+    }
+    ++modCount;
+    if (++size > threshold)
+        resize();
+    afterNodeInsertion(evict);
+    return null;
+}
+final Node<K,V>[] resize() {
+    Node<K,V>[] oldTab = table;
+    int oldCap = (oldTab == null) ? 0 : oldTab.length;
+    int oldThr = threshold;
+    int newCap, newThr = 0;
+    if (oldCap > 0) {
+        if (oldCap >= MAXIMUM_CAPACITY) {
+            threshold = Integer.MAX_VALUE;
+            return oldTab;
+        }
+        else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY &&
+                 oldCap >= DEFAULT_INITIAL_CAPACITY)
+            newThr = oldThr << 1; // double threshold
+    }
+    else if (oldThr > 0) // initial capacity was placed in threshold
+        newCap = oldThr;
+    else {               // zero initial threshold signifies using defaults
+        newCap = DEFAULT_INITIAL_CAPACITY;
+        newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+    }
+    if (newThr == 0) {
+        //重新计算阈值
+        float ft = (float)newCap * loadFactor;
+        newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
+                  (int)ft : Integer.MAX_VALUE);
+    }
+    threshold = newThr;
+    @SuppressWarnings({"rawtypes","unchecked"})
+    Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
+    table = newTab;
+    if (oldTab != null) {
+        for (int j = 0; j < oldCap; ++j) {
+            Node<K,V> e;
+            if ((e = oldTab[j]) != null) {
+                oldTab[j] = null;
+                if (e.next == null)
+                    newTab[e.hash & (newCap - 1)] = e;
+                else if (e instanceof TreeNode)
+                    ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                else { // preserve order
+                    Node<K,V> loHead = null, loTail = null;
+                    Node<K,V> hiHead = null, hiTail = null;
+                    Node<K,V> next;
+                    do {
+                        next = e.next;
+                        //根据e.hash & oldCap 判断节点存放位置
+                        //如果为0 扩容还在原来位置 如果为1 新的位置为旧的index + oldCap
+                        if ((e.hash & oldCap) == 0) {
+                            if (loTail == null)
+                                loHead = e;
+                            else
+                                loTail.next = e;
+                            loTail = e;
+                        }
+                        else {
+                            if (hiTail == null)
+                                hiHead = e;
+                            else
+                                hiTail.next = e;
+                            hiTail = e;
+                        }
+                    } while ((e = next) != null);
+                    if (loTail != null) {
+                        loTail.next = null;
+                        newTab[j] = loHead;
+                    }
+                    if (hiTail != null) {
+                        hiTail.next = null;
+                        newTab[j + oldCap] = hiHead;
+                    }
+                }
+            }
+        }
+    }
+    return newTab;
+}
+```
+
+JDK1.7和JDK1.8的比较
+
+数据结构
+
+| 版本 | 存储的数据结构   | 数组&链表节点的实现类 | 红黑树实现类 | 核心参数                                   |
+| ---- | ---------------- | --------------------- | ------------ | ------------------------------------------ |
+| 1.7  | 数组+链表        | Entry类               | /            | 链表长度大于8 的时候，则将链表转化为红黑树 |
+| 1.8  | 数组+链表+红黑树 | Node类                | TreeNode类   |                                            |
+
+获取数据
+
+| 版本 | 初始化方式             | hash值的计算                  | 存储数据的规则                                   | 插入数据方式 |
+| ---- | ---------------------- | ----------------------------- | ------------------------------------------------ | ------------ |
+| 1.7  | 构造函数               | 9次扰动=4次位预算+5次异或运算 | 无冲突存放数组，有冲突存放链表                   | 头插法       |
+| 1.8  | 集成在扩容函数resize() | 2次扰动=1次位运算+1次异或处理 | 无冲突存放数组，有冲突<8存放链表,有冲突>=8红黑树 | 尾插法       |
+
+扩容机制
+
+| 版本 | 扩容计算方式                     | 转移方式     | 需插入数据的插入时机&位置重计算时机 |
+| ---- | -------------------------------- | ------------ | ----------------------------------- |
+| 1.7  | 全部重新计算                     | 头插法，倒序 | 扩容后插入、单独计算                |
+| 1.8  | 扩容位置=原位置 or 原位置+旧容量 | 尾插法，原序 | 扩容前插入、转移数据统一计算        |
+
+#### LinkedHashMap
+
+​	`LinkedHashMap`继承了`HashMap`，但他多了一个**双向链表**来存储顺序。所以`LinkedHashMap`是一个有序的`HashMap`。
+
+​	在`HashMap`中有3个未实现的类都是给`LinkedHashMap`用的，都是为了保证`LinkedHashMap`的顺序
+
+```java
+// Callbacks to allow LinkedHashMap post-actions
+void afterNodeAccess(Node<K,V> p) { }
+void afterNodeInsertion(boolean evict) { }
+void afterNodeRemoval(Node<K,V> p) { }
+
+void afterNodeAccess(Node<K,V> e) { // move node to last
+    LinkedHashMap.Entry<K,V> last;
+    if (accessOrder && (last = tail) != e) {
+        LinkedHashMap.Entry<K,V> p =
+            (LinkedHashMap.Entry<K,V>)e, b = p.before, a = p.after;
+        p.after = null;
+        if (b == null)
+            head = a;
+        else
+            b.after = a;
+        if (a != null)
+            a.before = b;
+        else
+            last = b;
+        if (last == null)
+            head = p;
+        else {
+            p.before = last;
+            last.after = p;
+        }
+        tail = p;
+        ++modCount;
+    }
+}
+```
+
+​	在遍历的时候也有不一样的地方
+
+```java
+//HashMap:
+public void forEach(BiConsumer<? super K, ? super V> action) {
+    Node<K,V>[] tab;
+    if (action == null)
+        throw new NullPointerException();
+    if (size > 0 && (tab = table) != null) {
+        int mc = modCount;
+        //  是用tab循环
+        for (int i = 0; i < tab.length; ++i) {
+            for (Node<K,V> e = tab[i]; e != null; e = e.next)
+                action.accept(e.key, e.value);
+        }
+        if (modCount != mc)
+            throw new ConcurrentModificationException();
+    }
+}
+
+
+//LinkedHashMap
+public void forEach(BiConsumer<? super K, ? super V> action) {
+    if (action == null)
+        throw new NullPointerException();
+    int mc = modCount;
+    // 遍历的是这个双向链表，从head开始，所以是有序的，就是插入顺序
+    for (LinkedHashMap.Entry<K,V> e = head; e != null; e = e.after)
+        action.accept(e.key, e.value);
+    if (modCount != mc)
+        throw new ConcurrentModificationException();
+}
+```
+
+#### TreeMap
+
+​	`TreeMap`是`SortedMap`接口的实现类。`TreeMap`是一个**有序的key-value集合**，它是通过红黑树实现的，每个key-value对即作为红黑树的一个节点。
+
+​	`TreeMap`有两种排序方式，和`TreeSet`一样。
+
+​	1. 自然排序：`TreeMap`的所有key必须实现`Comparable`接口，而且所有的key应该是同一个类的对象，否则会抛出`ClassCastException`异常。
+
+​	2. 定制排序：创建`TreeMap`时，传入一个`Comparator`对象，该对象负责对`TreeMap`中的所有key进行排序。
+
+#### Hashtable
+
+​	`HashTable`是加了同步的`HashMap`，该数据结构是线程安全的。这是一个很老的类了，虽然他是线程安全的，但是很多方法都直接加了`synchronized`关键字，众所周知，`synchronized`是一个很重的锁，这样极大的影响了效率，在线程竞争激烈的情况下`HashTable`的效率非常低下。目前已经不推荐使用了，如果在并发环境使用HashMap，`ConcurrentHashMap`无疑是更好的选择。
+
+#### ConcurrentHashMap
+
+​	`HashTable`容器在竞争激烈的并发环境下表现出效率低下的原因，是因为所有访问`HashTable`的线程都必须竞争同一把锁，那假如容器里有多把锁，每一把锁用于锁容器其中一部分数据，那么当多线程访问容器里不同数据段的数据时，线程间就不会存在锁竞争，从而可以有效的提高并发访问效率，这就是`ConcurrentHashMap`所使用的锁分段技术，首先将数据分成一段一段的存储，然后给每一段数据配一把锁，当一个线程占用锁访问其中一个段数据的时候，其他段的数据也能被其他线程访问。有些方法需要跨段，比如size()和containsValue()，它们可能需要锁定整个表而而不仅仅是某个段，这需要按顺序锁定所有段，操作完毕后，又按顺序释放所有段的锁。这里“按顺序”是很重要的，否则极有可能出现死锁，在`ConcurrentHashMap`内部，段数组是`final`的，并且其成员变。量实际上也是`final`的，但是，仅仅是将数组声明为`final`的并不保证数组成员也是`final`的，这需要实现上的保证。这可以确保不会出现死锁，因为获得锁的顺序是固定的。
+
+##### 1.7版本的ConCurrentHashMap
+
+![锁分段技术.png](./pic/锁分段技术.png)
+
+​	`ConcurrentHashMap`是由`Segment`数组结构和`HashEntry`数组结构组成。`Segment`是一种可重入锁`ReentrantLock`，在`ConcurrentHashMap`里扮演锁的角色，`HashEntry`则用于存储键值对数据。一个`ConcurrentHashMap`里包含一个`Segment`数组，`Segment`的结构和`HashMap`类似，是一种数组和链表结构， 一个`Segment`里包含一个`HashEntry`数组，每个`HashEntry`是一个链表结构的元素， 每个`Segment`守护者一个`HashEntry`数组里的元素,当对`HashEntry`数组的数据进行修改时，必须首先获得它对应的`Segment`锁。
+
+1. HashEntry类
+
+```java
+static final class HashEntry<K,V> {
+    // 用关键词final修饰的变量一旦赋值，就不能改变，也称为修饰的标识为常量。
+    final int hash;
+    final K key;
+    // volatile保证内存可见，必须每次都从主内存中拿
+    volatile V value;
+    volatile HashEntry<K,V> next;
+}
+```
+
+2. Segment类
+
+```java
+static final class Segment<K,V> extends ReentrantLock implements Serializable {
+    private static final long serialVersionUID = 2249069246763182397L;
+
+    /**
+     * The maximum number of times to tryLock in a prescan before
+     * possibly blocking on acquire in preparation for a locked
+     * segment operation. On multiprocessors, using a bounded
+     * number of retries maintains cache acquired while locating
+     * nodes.
+     */
+    //变成阻塞式锁之前，最大的扫描次数
+    static final int MAX_SCAN_RETRIES =
+        Runtime.getRuntime().availableProcessors() > 1 ? 64 : 1;
+
+    /**
+     * The per-segment table. Elements are accessed via
+     * entryAt/setEntryAt providing volatile semantics.
+     */
+    //分段锁内的hashTable数组
+    transient volatile HashEntry<K,V>[] table;
+
+    /**
+     * The number of elements. Accessed only either within locks
+     * or among other volatile reads that maintain visibility.
+     */
+    //元素个数
+    transient int count;
+
+    /**
+     * The total number of mutative operations in this segment.
+     * Even though this may overflows 32 bits, it provides
+     * sufficient accuracy for stability checks in CHM isEmpty()
+     * and size() methods.  Accessed only either within locks or
+     * among other volatile reads that maintain visibility.
+     */
+    //修改次数
+    transient int modCount;
+
+    /**
+     * The table is rehashed when its size exceeds this threshold.
+     * (The value of this field is always <tt>(int)(capacity *
+     * loadFactor)</tt>.)
+     */
+    //阈值
+    transient int threshold;
+
+    /**
+     * The load factor for the hash table.  Even though this value
+     * is same for all segments, it is replicated to avoid needing
+     * links to outer object.
+     * @serial
+     */
+    //载入因子
+    final float loadFactor;
+}
+```
+
+3. 构造方法
+
+```java
+public ConcurrentHashMap(int initialCapacity,
+                             float loadFactor, int concurrencyLevel) {
+    if (!(loadFactor > 0) || initialCapacity < 0 || concurrencyLevel <= 0)
+        throw new IllegalArgumentException();
+    if (concurrencyLevel > MAX_SEGMENTS)
+        concurrencyLevel = MAX_SEGMENTS;
+    // Find power-of-two sizes best matching arguments
+    int sshift = 0;
+    int ssize = 1;
+    //一定为2次幂的并发级别
+    while (ssize < concurrencyLevel) {
+        ++sshift;
+        ssize <<= 1;
+    }
+    this.segmentShift = 32 - sshift;
+    // 掩码值，转二进制也就都是1
+    this.segmentMask = ssize - 1;
+    if (initialCapacity > MAXIMUM_CAPACITY)
+        initialCapacity = MAXIMUM_CAPACITY;
+    int c = initialCapacity / ssize;
+    if (c * ssize < initialCapacity)
+        ++c;
+    int cap = MIN_SEGMENT_TABLE_CAPACITY;
+    while (cap < c)
+        cap <<= 1;
+    // create segments and segments[0]
+    Segment<K,V> s0 =
+        new Segment<K,V>(loadFactor, (int)(cap * loadFactor),
+                         (HashEntry<K,V>[])new HashEntry[cap]);
+    Segment<K,V>[] ss = (Segment<K,V>[])new Segment[ssize];
+    UNSAFE.putOrderedObject(ss, SBASE, s0); // ordered write of segments[0]
+    this.segments = ss;
+}
+```
+
+4. put方法
+
+```java
+public V put(K key, V value) {
+    Segment<K,V> s;
+    if (value == null)
+        throw new NullPointerException();
+    int hash = hash(key);
+    int j = (hash >>> segmentShift) & segmentMask;
+    if ((s = (Segment<K,V>)UNSAFE.getObject          // nonvolatile; recheck
+         (segments, (j << SSHIFT) + SBASE)) == null) //  in ensureSegment
+        s = ensureSegment(j);
+    return s.put(key, hash, value, false);
+}
+final V put(K key, int hash, V value, boolean onlyIfAbsent) {
+    HashEntry<K,V> node = tryLock() ? null :
+    scanAndLockForPut(key, hash, value);
+    V oldValue;
+    try {
+        HashEntry<K,V>[] tab = table;
+        int index = (tab.length - 1) & hash;
+        HashEntry<K,V> first = entryAt(tab, index);
+        for (HashEntry<K,V> e = first;;) {
+            if (e != null) {
+                K k;
+                if ((k = e.key) == key ||
+                    (e.hash == hash && key.equals(k))) {
+                    oldValue = e.value;
+                    if (!onlyIfAbsent) {
+                        e.value = value;
+                        ++modCount;
+                    }
+                    break;
+                }
+                e = e.next;
+            }
+            else {
+                if (node != null)
+                    node.setNext(first);
+                else
+                    node = new HashEntry<K,V>(hash, key, value, first);
+                int c = count + 1;
+                if (c > threshold && tab.length < MAXIMUM_CAPACITY)
+                    rehash(node);
+                else
+                    setEntryAt(tab, index, node);
+                ++modCount;
+                count = c;
+                oldValue = null;
+                break;
+            }
+        }
+    } finally {
+        unlock();
+    }
+    return oldValue;
+}
+//扫描并锁住对象
+private HashEntry<K,V> scanAndLockForPut(K key, int hash, V value) {
+    //获取到Segment的HashEntry
+    HashEntry<K,V> first = entryForHash(this, hash);
+    HashEntry<K,V> e = first;
+    HashEntry<K,V> node = null;
+    int retries = -1; // negative while locating node
+    while (!tryLock()) {
+        HashEntry<K,V> f; // to recheck first below
+        if (retries < 0) {
+            if (e == null) {
+                if (node == null) // speculatively create node
+                    node = new HashEntry<K,V>(hash, key, value, null);
+                retries = 0;
+            }
+            else if (key.equals(e.key))
+                retries = 0;
+            else
+                e = e.next;
+        }
+        else if (++retries > MAX_SCAN_RETRIES) {
+            //超过了最大扫描重试次数，锁住并返回,这里的锁住是说等待另一个线程解锁，然后自己用
+            lock();
+            break;
+        }
+        else if ((retries & 1) == 0 &&
+                 (f = entryForHash(this, hash)) != first) {
+            //当在自旋过程中发现节点链的链头发生了变化，则更新节点链的链头，并重置retries值为－1，重新为尝试获取锁而自旋遍历。
+            e = first = f; // re-traverse if entry changed
+            retries = -1;
+        }
+    }
+    return node;
+}
+```
+
+5. get方法
+
+```java
+ public V get(Object key) {
+     Segment<K,V> s; // manually integrate access methods to reduce overhead
+     HashEntry<K,V>[] tab;
+     int h = hash(key);
+     long u = (((h >>> segmentShift) & segmentMask) << SSHIFT) + SBASE;
+     if ((s = (Segment<K,V>)UNSAFE.getObjectVolatile(segments, u)) != null &&
+         (tab = s.table) != null) {
+         for (HashEntry<K,V> e = (HashEntry<K,V>) UNSAFE.getObjectVolatile
+              (tab, ((long)(((tab.length - 1) & h)) << TSHIFT) + TBASE);
+              e != null; e = e.next) {
+             K k;
+             if ((k = e.key) == key || (e.hash == h && key.equals(k)))
+                 return e.value;
+         }
+     }
+     return null;
+ }
+```
+
+6. size方法
+
+```java
+public int size() {
+    // Try a few times to get accurate count. On failure due to
+    // continuous async changes in table, resort to locking.
+    final Segment<K,V>[] segments = this.segments;
+    int size;
+    boolean overflow; // true if size overflows 32 bits
+    long sum;         // sum of modCounts
+    long last = 0L;   // previous sum
+    int retries = -1; // first iteration isn't retry
+    try {
+        for (;;) {
+            if (retries++ == RETRIES_BEFORE_LOCK) {
+                for (int j = 0; j < segments.length; ++j)
+                    // 全部加锁，因为有多个segment,统计size,需要全部锁住才能计算准确
+                    ensureSegment(j).lock(); // force creation
+            }
+            sum = 0L;
+            size = 0;
+            overflow = false;
+            for (int j = 0; j < segments.length; ++j) {
+                //每个segment进行累加
+                Segment<K,V> seg = segmentAt(segments, j);
+                if (seg != null) {
+                    sum += seg.modCount;
+                    int c = seg.count;
+                    if (c < 0 || (size += c) < 0)
+                        overflow = true;
+                }
+            }
+            if (sum == last)
+                break;
+            last = sum;
+        }
+    } finally {
+        //解锁
+        if (retries > RETRIES_BEFORE_LOCK) {
+            for (int j = 0; j < segments.length; ++j)
+                segmentAt(segments, j).unlock();
+        }
+    }
+    return overflow ? Integer.MAX_VALUE : size;
+}
+```
+
+7. remove方法
+
+```java
+final V remove(Object key, int hash, Object value) {
+    if (!tryLock())
+        //获取锁，最大等待64次，等待64次后，一定lock住，等待其他线程释放
+        scanAndLock(key, hash);
+    V oldValue = null;
+    try {
+        HashEntry<K,V>[] tab = table;
+        int index = (tab.length - 1) & hash;
+        //得到HashEntry节点
+        HashEntry<K,V> e = entryAt(tab, index);
+        HashEntry<K,V> pred = null;
+        while (e != null) {
+            K k;
+            HashEntry<K,V> next = e.next;
+            //挪动链表，删除节点
+            if ((k = e.key) == key ||
+                (e.hash == hash && key.equals(k))) {
+                V v = e.value;
+                if (value == null || value == v || value.equals(v)) {
+                    if (pred == null)
+                        setEntryAt(tab, index, next);
+                    else
+                        pred.setNext(next);
+                    ++modCount;
+                    --count;
+                    oldValue = v;
+                }
+                break;
+            }
+            pred = e;
+            e = next;
+        }
+    } finally {
+        unlock();
+    }
+    return oldValue;
+}
+```
+
+##### 1.8 版本的ConCurrentHashMap
+
+​	1.8版本的ConcurrentHashMap对比1.7版本做了很大的改动。并不是采用分段锁的机制进行处理，采用了CAS + synchronized保证并发更新。
+
+> synchronized已经被做了CAS的优化：具体是这样的，当执行到synchronized代码块时，先对对象头的锁标志位用lock cmpxchg的方式设置成“锁住“状态，释放锁时，在用lock cmpxchg的方式修改对象头的锁标志位为”释放“状态，写操作都立刻写回主内存。JVM会进一步对synchronized时CAS失败的那些线程进行阻塞操作(调用操作系统的信号量)(此段来摘自别处)。也就是先CAS操作，不行的话继而阻塞线程。
+
+1. 构造方法
+
+   这个构造没有1.7的复杂，和1.8的HashMap差不多
+
+```java
+public ConcurrentHashMap(int initialCapacity,
+                             float loadFactor, int concurrencyLevel) {
+    if (!(loadFactor > 0.0f) || initialCapacity < 0 || concurrencyLevel <= 0)
+        throw new IllegalArgumentException();
+    if (initialCapacity < concurrencyLevel)   // Use at least as many bins
+        initialCapacity = concurrencyLevel;   // as estimated threads
+    long size = (long)(1.0 + (long)initialCapacity / loadFactor);
+    int cap = (size >= (long)MAXIMUM_CAPACITY) ?
+        MAXIMUM_CAPACITY : tableSizeFor((int)size);
+    this.sizeCtl = cap;
+}
+```
+
+2. put方法
+
+```java
+public V put(K key, V value) {
+    return putVal(key, value, false);
+}
+
+final V putVal(K key, V value, boolean onlyIfAbsent) {
+    if (key == null || value == null) throw new NullPointerException();
+    //算hash值
+    int hash = spread(key.hashCode());
+    int binCount = 0;
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0)
+            tab = initTable();
+        else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+            // CAS添加新键值对
+            if (casTabAt(tab, i, null,
+                         new Node<K,V>(hash, key, value, null)))
+                break;                   // no lock when adding to empty bin
+        }
+        else if ((fh = f.hash) == MOVED)
+            tab = helpTransfer(tab, f);
+        else {
+            V oldVal = null;
+            // 对桶的首元素上锁独占
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    if (fh >= 0) {
+                        binCount = 1;
+                        for (Node<K,V> e = f;; ++binCount) {
+                            K ek;
+                            if (e.hash == hash &&
+                                ((ek = e.key) == key ||
+                                 (ek != null && key.equals(ek)))) {
+                                oldVal = e.val;
+                                if (!onlyIfAbsent)
+                                    e.val = value;
+                                break;
+                            }
+                            Node<K,V> pred = e;
+                            if ((e = e.next) == null) {
+                                pred.next = new Node<K,V>(hash, key,
+                                                          value, null);
+                                break;
+                            }
+                        }
+                    }
+                    else if (f instanceof TreeBin) {
+                        Node<K,V> p;
+                        binCount = 2;
+                        if ((p = ((TreeBin<K,V>)f).putTreeVal(hash, key,
+                                                              value)) != null) {
+                            oldVal = p.val;
+                            if (!onlyIfAbsent)
+                                p.val = value;
+                        }
+                    }
+                }
+            }
+            if (binCount != 0) {
+                if (binCount >= TREEIFY_THRESHOLD)
+                    treeifyBin(tab, i);
+                if (oldVal != null)
+                    return oldVal;
+                break;
+            }
+        }
+    }
+    addCount(1L, binCount);
+    return null;
+}
+//SIZECTL == 0时候，默认情况
+//SIZECTL == -1 时候，说明table正在初始化
+//SIZECTL > 0 时候，说明接下来初始化要的初始化容量或者是扩容成功后threadshold的值
+//SIZECTL < 0 时候，说明正在扩容
+private final Node<K,V>[] initTable() {
+    Node<K,V>[] tab; int sc;
+    while ((tab = table) == null || tab.length == 0) {
+        if ((sc = sizeCtl) < 0)
+            Thread.yield(); // lost initialization race; just spin
+        //CAS 等待获取锁
+        else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+            try {
+                if ((tab = table) == null || tab.length == 0) {
+                    int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
+                    @SuppressWarnings("unchecked")
+                    Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
+                    table = tab = nt;
+                    sc = n - (n >>> 2);
+                }
+            } finally {
+                sizeCtl = sc;
+            }
+            break;
+        }
+    }
+    return tab;
+}
+```
+
+3. get方法
+
+   get方法通过CAS保证键值对的原子性，当tab[i]被锁住，CAS失败并不断重试，保证get不会出错
+
+```java
+public V get(Object key) {
+    Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
+    int h = spread(key.hashCode());
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        (e = tabAt(tab, (n - 1) & h)) != null) {
+        if ((eh = e.hash) == h) {
+            if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                return e.val;
+        }
+        else if (eh < 0)
+            return (p = e.find(h, key)) != null ? p.val : null;
+        while ((e = e.next) != null) {
+            if (e.hash == h &&
+                ((ek = e.key) == key || (ek != null && key.equals(ek))))
+                return e.val;
+        }
+    }
+    return null;
+}
+//调用Unsafe对象的getObjectVolatile方法获取tab[i]，由于对volatile写操作happen-before于volatile读操作，因此其他线程对table的修改均对get读取可见；((long)i << ASHIFT) + ABASE)计算i元素的地址
+static final <K,V> Node<K,V> tabAt(Node<K,V>[] tab, int i) {
+    return (Node<K,V>)U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
+}
+```
+
+4. size 方法
+
+```java
+public int size() {
+    long n = sumCount();
+    return ((n < 0L) ? 0 :
+            (n > (long)Integer.MAX_VALUE) ? Integer.MAX_VALUE :
+            (int)n);
+}
+//多加一个counterCells数组，方便计算size的值
+final long sumCount() {
+    CounterCell[] as = counterCells; CounterCell a;
+    long sum = baseCount;
+    if (as != null) {
+        for (int i = 0; i < as.length; ++i) {
+            if ((a = as[i]) != null)
+                sum += a.value;
+        }
+    }
+    return sum;
+}
+```
+
+5. remove
+
+```java
+public V remove(Object key) {
+    return replaceNode(key, null, null);
+}
+final V replaceNode(Object key, V value, Object cv) {
+    int hash = spread(key.hashCode());
+    for (Node<K,V>[] tab = table;;) {
+        Node<K,V> f; int n, i, fh;
+        if (tab == null || (n = tab.length) == 0 ||
+            (f = tabAt(tab, i = (n - 1) & hash)) == null)
+            break;
+        else if ((fh = f.hash) == MOVED)
+            tab = helpTransfer(tab, f);
+        else {
+            V oldVal = null;
+            boolean validated = false;
+            synchronized (f) {
+                if (tabAt(tab, i) == f) {
+                    if (fh >= 0) {
+                        validated = true;
+                        for (Node<K,V> e = f, pred = null;;) {
+                            K ek;
+                            if (e.hash == hash &&
+                                ((ek = e.key) == key ||
+                                 (ek != null && key.equals(ek)))) {
+                                V ev = e.val;
+                                if (cv == null || cv == ev ||
+                                    (ev != null && cv.equals(ev))) {
+                                    oldVal = ev;
+                                    if (value != null)
+                                        e.val = value;
+                                    else if (pred != null)
+                                        pred.next = e.next;
+                                    else
+                                        setTabAt(tab, i, e.next);
+                                }
+                                break;
+                            }
+                            pred = e;
+                            if ((e = e.next) == null)
+                                break;
+                        }
+                    }
+                    else if (f instanceof TreeBin) {
+                        validated = true;
+                        TreeBin<K,V> t = (TreeBin<K,V>)f;
+                        TreeNode<K,V> r, p;
+                        if ((r = t.root) != null &&
+                            (p = r.findTreeNode(hash, key, null)) != null) {
+                            V pv = p.val;
+                            if (cv == null || cv == pv ||
+                                (pv != null && cv.equals(pv))) {
+                                oldVal = pv;
+                                if (value != null)
+                                    p.val = value;
+                                else if (t.removeTreeNode(p))
+                                    setTabAt(tab, i, untreeify(t.first));
+                            }
+                        }
+                    }
+                }
+            }
+            if (validated) {
+                if (oldVal != null) {
+                    if (value == null)
+                        addCount(-1L, -1);
+                    return oldVal;
+                }
+                break;
+            }
+        }
+    }
+    return null;
+}
+```
+
