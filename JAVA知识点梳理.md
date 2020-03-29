@@ -1157,7 +1157,7 @@ void transfer(Entry[] newTable, boolean rehash) {
 void createEntry(int hash, K key, V value, int bucketIndex) {
     Entry<K,V> e = table[bucketIndex];
     //e为next,所以是头插法，自己占用第一顺序位
-    //也正是头插法的这个原因，在多线程的情况会产生循环列表而导致死循环
+    //也正是头插法（导致扩容的时候顺序倒置，一个顺序，一个逆序，这样就可能互相指向）的这个原因，在多线程的情况会产生循环列表而导致死循环
     table[bucketIndex] = new Entry<>(hash, key, value, e);
     size++;
 }
@@ -2308,23 +2308,534 @@ int j = 1;
 
 ### 同步处理
 
-#### synchronized
+#### synchronized定义及原理
+
+​	synchronized 的作用主要有三个：
+
+- 确保线程互斥的访问同步代码
+- 保证共享变量的修改能够及时可见
+- 有效解决重排序问题
 
 ​	在java语言中存在两种内建的synchronized语法：1、synchronized语句；2、synchronized方法。
 
 ​	对于synchronized语句当Java源代码被javac编译成bytecode的时候，会在同步块的入口位置和退出位置分别插入monitorenter和monitorexit字节码指令。而synchronized方法则会被翻译成普通的方法调用和返回指令如:invokevirtual、areturn指令，在VM字节码层面并没有任何特别的指令来实现被synchronized修饰的方法，而是在Class文件的方法表中将该方法的access_flags字段中的synchronized标志位置1，表示该方法是同步方法并使用调用该方法的对象或该方法所属的Class在JVM的内部对象表示Class做为锁对象。
 
-​	简单来说在JVM中monitorenter和monitorexit字节码依赖于底层的操作系统的Mutex Lock来实现的，但是由于使用Mutex Lock需要将当前线程挂起并从用户态切换到内核态来执行，这种切换的代价是非常昂贵的；然而在现实中的大部分情况下，同步方法是运行在单线程环境（无锁竞争环境）如果每次都调用Mutex Lock那么将严重的影响程序的性能。不过在jdk1.6中对锁的实现引入了大量的优化，如锁粗化（Lock Coarsening）、锁消除（Lock Elimination）、轻量级锁（Lightweight Locking）、偏向锁（Biased Locking）、适应性自旋（Adaptive Spinning）等技术来减少锁操作的开销。
+##### monitor
 
-- 锁粗化（Lock Coarsening）： 也就是减少不必要的紧连在一起的unlock，lock操作，将多个连续的锁扩展成一个范围更大的锁。
+1. Monitor对象是jvm实现的，c++中的对象。
 
-- 锁消除（Lock Elimination）： 通过运行时JIT编译器的逃逸分析来消除一些没有在当前同步块以外被其他线程共享的数据的锁保护，通过逃逸分析也可以在线程本地Stack上进行对象空间的分配（同时还可以减少Heap上的垃圾收集开销）。
+2. 每个对象内部都有一个唯一的monitor,monitor的获取是互斥的。
 
-- 轻量级锁（Lightweight Locking）： 这种锁实现的背后基于这样一种假设，即在真实的情况下我们程序中的大部分同步代码一般都处于无锁竞争状态（即单线程执行环境），在无锁竞争的情况下完全可以避免调用操作系统层面的重量级互斥锁，取而代之的是在monitorenter和monitorexit中只需要依靠一条CAS原子指令就可以完成锁的获取及释放。当存在锁竞争的情况下，执行CAS指令失败的线程将调用操作系统互斥锁进入到阻塞状态，当锁被释放的时候被唤醒（具体处理步骤下面详细讨论）。
+3. synchronized通过monitor来实现互斥。
 
-- 偏向锁（Biased Locking）： 是为了在无锁竞争的情况下避免在锁获取过程中执行不必要的CAS原子指令，因为CAS原子指令虽然相对于重量级锁来说开销比较小但还是存在非常可观的本地延迟。
+4. monitor的本质是依赖于底层操作系统的Mutex Lock实现，操作系统实现线程之间的切换需要从用户态到内核态的切换，切换成本非常高。
 
-- 适应性自旋（Adaptive Spinning）： 当线程在获取轻量级锁的过程中执行CAS操作失败时，在进入与monitor相关联的操作系统重量级锁（mutex semaphore）前会进入忙等待（Spinning）然后再次尝试，当尝试一定的次数后如果仍然没有成功则调用与该monitor关联的semaphore（即互斥锁）进入到阻塞状态。
+##### synchronized语句
+
+```java
+package com.paddx.test.concurrent; 
+public class SynchronizedDemo {
+    private final Object obj = new Object();
+    public void method() {
+        synchronized (obj){
+            System.out.println("hello world");
+        }
+    } 
+}
+```
+​	反编译结果：
+
+![synchronized对象.png](./pic/synchronized对象.png)
+
+​	每个对象有一个监视器锁(Monitor)，当 Monitor 被占用时就会处于锁定状态。
+
+​	线程执行`Monitorenter`指令时尝试获取Monitor的所有权，过程如下：
+
+- 如果Monitor的进入数为0，则该线程进入Monitor，然后将进入数设置为1，该线程即为Monitor的所有者。
+- 如果线程已经占有该Monitor，只是重新进入，则进入Monitor的进入数加1。
+- 如果其他线程已经占用了Monitor，则该线程进入阻塞状态，直到Monitor的进入数为 0，再重新尝试获取Monitor的所有权。
+
+​	执行`Monitorexit`的线程必须是Objectref所对应的Monitor的所有者。指令执行时，Monitor的进入数减 1，如果减 1 后进入数为 0，那线程退出Monitor，不再是这个Monitor的所有者。其他被这个Monitor阻塞的线程可以尝试去获取这个Monitor的所有权。
+
+​	通过这两段描述，我们应该能很清楚的看出`Synchronized`的实现原理。`Synchronized`的语义底层是通过一个Monitor 的对象来完成，其实 Wait/Notify 等方法也依赖于 Monitor 对象。
+
+##### synchronized方法
+
+```java
+package com.paddx.test.concurrent; 
+public class SynchronizedMethod { 
+    public synchronized void method() { 
+      System.out.println("Hello World!"); 
+    } 
+} 
+```
+
+​	反编译结果：
+
+![synchronized方法.png](./pic/synchronized方法.png)
+
+​	从反编译的结果来看，方法的同步并没有通过指令`Monitorenter`和`Monitorexit`来完成(理论上其实也可以通过这两条指令来实现)。不过相对于普通方法，其常量池中多了`ACC_SYNCHRONIZED`标示符。
+
+​	JVM 就是根据该标示符来实现方法的同步的：当方法调用时，调用指令将会检查方法的`ACC_SYNCHRONIZED`访问标志是否被设置。如果设置了，执行线程将先获取Monitor，获取成功之后才能执行方法体，方法执行完后再释放 Monitor。在方法执行期间，其他任何线程都无法再获得同一个Monitor对象。
+
+​	其实本质上没有区别，只是方法的同步是一种隐式的方式来实现，无需通过字节码来完成。
+
+#### JDK synchronized优化
+
+​	JDK 1.6，Java对synchronized同步锁做了充分的优化，甚至在某些场景下，它的性能已经超越了Lock同步锁。其优化了两方面的内容。
+
+1. 为了提升性能，在JDK 1.6引入偏向锁、轻量级锁、重量级锁，用来减少锁竞争带来的上下文切换
+2. 借助JDK 1.6新增的Java对象头，实现了锁升级功能
+
+##### Java对象头
+
+1. 在JDK 1.6的JVM中，对象实例在堆内存中被分为三部分：对象头、实例数据、对齐填充
+
+2. 对象头的组成部分：Mark Word、指向类的指针、数组长度（可选，数组类型时才有）
+
+3. Mark Word记录了对象和锁有关的信息，在64位的JVM中，Mark Word为64 bit
+
+4. 锁升级功能主要依赖于Mark Word中锁标志位和是否偏向锁标志位
+
+5. synchronized同步锁的升级优化路径：偏向锁 -> 轻量级锁 -> 重量级锁
+
+ ![java对象头.png](./pic/java对象头.png)
+
+##### 偏向锁
+
+​	偏向锁主要用来优化同一线程多次申请同一个锁的竞争，在某些情况下，大部分时间都是同一个线程竞争锁资源。偏向锁的作用：
+
+1. 当一个线程再次访问同一个同步代码时，该线程只需对该对象头的Mark Word中去判断是否有偏向锁指向它
+
+2. 无需再进入Monitor去竞争对象（避免用户态和内核态的切换）
+
+​	当对象被当做同步锁，并有一个线程抢到锁时，锁标志位还是01，是否偏向锁标志位设置为1，并且记录抢到锁的线程ID，进入偏向锁状态。偏向锁不会主动释放锁,当线程1再次获取锁时，会比较当前线程的ID与锁对象头部的线程ID是否一致，如果一致，无需CAS来抢占锁。如果不一致，需要查看锁对象头部记录的线程是否存活。如果没有存活，那么锁对象被重置为无锁状态（也是一种撤销），然后重新偏向线程2。如果存活，查找线程1的栈帧信息。如果线程1还是需要继续持有该锁对象，那么暂停线程1（STW），撤销偏向锁，升级为轻量级锁。如果线程1不再使用该锁对象，那么将该锁对象设为无锁状态（也是一种撤销），然后重新偏向线程2。
+
+​	一旦出现其他线程竞争锁资源时，偏向锁就会被撤销。偏向锁的撤销可能需要等待全局安全点，暂停持有该锁的线程，同时检查该线程是否还在执行该方法。如果还没有执行完，说明此刻有多个线程竞争，升级为轻量级锁；如果已经执行完毕，唤醒其他线程继续CAS抢占。在高并发场景下，当大量线程同时竞争同一个锁资源时，偏向锁会被撤销，发生STW，加大了性能开销。
+
+> 默认配置 -XX:+UseBiasedLocking -XX:BiasedLockingStartupDelay=4000
+> 默认开启偏向锁，并且延迟生效，因为JVM刚启动时竞争非常激烈
+> 关闭偏向锁   -XX:-UseBiasedLocking
+> 设置为重量级锁  -XX:+UseHeavyMonitors
+
+红线流程部分：偏向锁的获取和撤销。
+
+![偏向锁.png](./pic/偏向锁.png)
+
+##### 轻量级锁
+
+​	当有另外一个线程竞争锁时，由于该锁处于偏向锁状态，发现对象头Mark Word中的线程ID不是自己的线程ID，该线程就会执行CAS操作获取锁
+
+- 如果获取成功，直接替换Mark Word中的线程ID为自己的线程ID，该锁会保持偏向锁状态
+- 如果获取失败，说明当前锁有一定的竞争，将偏向锁升级为轻量级锁
+
+​	线程获取轻量级锁时会有两步
+
+ 1. 先把锁对象的Mark Word复制一份到线程的栈帧中（DisplacedMarkWord），主要为了保留现场!!
+ 2. 然后使用CAS，把对象头中的内容替换为线程栈帧中DisplacedMarkWord的地址
+
+场景
+
+- 在线程1复制对象头Mark Word的同时（CAS之前），线程2也准备获取锁，也复制了对象头Mark Word
+- 在线程2进行CAS时，发现线程1已经把对象头换了，线程2的CAS失败，线程2会尝试使用自旋锁来等待线程1释放锁
+
+1. 轻量级锁的适用场景：线程交替执行同步块，绝大部分的锁在整个同步周期内都不存在长时间的竞争
+
+​	红线流程部分：升级轻量级锁
+
+![轻量级锁.png](./pic/轻量级锁.png)
+
+##### 自旋锁 / 重量级锁
+
+​	轻量级锁CAS抢占失败，线程将会被挂起进入阻塞状态，如果正在持有锁的线程在很短的时间内释放锁资源，那么进入阻塞状态的线程被唤醒后又要重新抢占锁资源。
+
+1. JVM提供了自旋锁，可以通过自旋的方式不断尝试获取锁，从而避免线程被挂起阻塞
+2. 从JDK 1.7开始，自旋锁默认启用，自旋次数不建议设置过大（意味着长时间占用CPU）
+
+> 设置方法：
+> -XX:+UseSpinning -XX:PreBlockSpin=10
+
+​	若自旋锁重试之后如果依然抢锁失败，同步锁会升级至重量级锁，锁标志位为10。在这个状态下，未抢到锁的线程都会进入Monitor，之后会被阻塞在WaitSet中。在锁竞争不激烈且锁占用时间非常短的场景下，自旋锁可以提高系统性能，一旦锁竞争激烈或者锁占用的时间过长，自旋锁将会导致大量的线程一直处于CAS重试状态，占用CPU资源。
+
+> 在高并发的场景下，可以通过关闭自旋锁来优化系统性能
+> -XX:-UseSpinning  关闭自旋锁优化
+> -XX:PreBlockSpin   默认的自旋次数，在JDK 1.7后，由JVM控制
+
+![重量级锁.png](./pic/重量级锁.png)
+
+##### 总结
+
+1.JVM在JDK 1.6中引入了分级锁机制来优化`synchronized`
+
+2.当一个线程获取锁时，首先对象锁成为一个偏向锁
+
+- 这是为了避免在同一线程重复获取同一把锁时，用户态和内核态频繁切换
+
+3.如果有多个线程竞争锁资源，锁将会升级为轻量级锁
+
+- 这适用于在短时间内持有锁，且分锁交替切换的场景
+- 轻量级锁还结合了自旋锁来避免线程用户态与内核态的频繁切换
+
+4.如果锁竞争太激烈（自旋锁失败），同步锁会升级为重量级锁
+
+5.优化synchronized同步锁的关键：减少锁竞争
+
+- 应该尽量使synchronized同步锁处于轻量级锁或偏向锁，这样才能提高synchronized同步锁的性能
+- 常用手段
+- 减少锁粒度：降低锁竞争
+- 减少锁的持有时间，提高synchronized同步锁在自旋时获取锁资源的成功率，避免升级为重量级锁
+
+6.在锁竞争激烈时，可以考虑禁用偏向锁和禁用自旋锁
+
+![各级锁对比.png](./pic/各级锁对比.png)
+
+#### AbstractQueuedSynchronizer
+
+​	AbstractQueuedSynchronizer(AQS)是JDK中实现并发编程的核心，平时我们工作中经常用到的ReentrantLock，CountDownLatch等都是基于它来实现的。
+
+​	 AQS类中维护了一个双向链表(FIFO队列)， 如下图所示：
+
+​    ![AQS双向链表.png](./pic/AQS双向链表.png)
+
+​    队列中的每个元素都用一个Node表示，我们可以看到，Node类中有几个静态常量表示的状态：
+
+```java
+static final class Node {
+    // 共享模式下等待的标记
+    static final Node SHARED = new Node();
+    // 独占模式下等待的标记
+    static final Node EXCLUSIVE = null;
+
+    // 线程的等待状态 表示线程已经被取消
+    static final int CANCELLED =  1;
+    // 线程的等待状态 表示后继线程需要被唤醒
+    static final int SIGNAL    = -1;
+    // 线程的等待状态 表示线程在Condtion上
+    static final int CONDITION = -2;
+    
+    // 表示下一个acquireShared需要无条件的传播
+    static final int PROPAGATE = -3;
+
+    /**
+     *   SIGNAL:     当前节点的后继节点处于等待状态时,如果当前节点的同步状态被释放或者取消,
+     *               必须唤起它的后继节点
+     *         
+     *   CANCELLED:  一个节点由于超时或者中断需要在CLH队列中取消等待状态,被取消的节点不会再次等待
+     *               
+     *   CONDITION:  当前节点在等待队列中,只有当节点的状态设为0的时候该节点才会被转移到同步队列
+     *               
+     *   PROPAGATE:  下一次的共享模式同步状态的获取将会无条件的传播
+
+     *   waitStatus的初始值时0,使用CAS来修改节点的状态
+     */
+    volatile int waitStatus;
+
+    /**
+     * 当前节点的前驱节点,当前线程依赖它来检查waitStatus,在入队的时候才被分配,
+     * 并且只在出队的时候才被取消(为了GC),头节点永远不会被取消,一个节点成为头节点
+     * 仅仅是成功获取到锁的结果,一个被取消的线程永远也不会获取到锁,线程只取消自身,
+     * 而不涉及其他节点
+     */
+    volatile Node prev;
+
+    /**
+     * 当前节点的后继节点,当前线程释放的才被唤起,在入队时分配,在绕过被取消的前驱节点
+     * 时调整,在出队列的时候取消(为了GC)
+     * 如果一个节点的next为空,我们可以从尾部扫描它的prev,双重检查
+     * 被取消节点的next设置为指向节点本身而不是null,为了isOnSyncQueue更容易操作
+     */
+    volatile Node next;
+
+    /**
+     * 当前节点的线程,初始化后使用,在使用后失效 
+     */
+    volatile Thread thread;
+
+    /**
+     * 链接到下一个节点的等待条件,或特殊的值SHARED,因为条件队列只有在独占模式时才能被访问,
+     * 所以我们只需要一个简单的连接队列在等待的时候保存节点,然后把它们转移到队列中重新获取
+     * 因为条件只能是独占性的,我们通过使用特殊的值来表示共享模式
+     */
+    Node nextWaiter;
+
+    /**
+     * 如果节点处于共享模式下等待直接返回true
+     */
+    final boolean isShared() {
+        return nextWaiter == SHARED;
+    }
+
+    /**
+     * 返回当前节点的前驱节点,如果为空,直接抛出空指针异常
+     */
+    final Node predecessor() throws NullPointerException {
+        Node p = prev;
+        if (p == null)
+            throw new NullPointerException();
+        else
+            return p;
+    }
+
+    Node() {    // 用来建立初始化的head 或 SHARED的标记
+    }
+
+    Node(Thread thread, Node mode) {     // 指定线程和模式的构造方法
+        this.nextWaiter = mode;
+        this.thread = thread;
+    }
+
+    Node(Thread thread, int waitStatus) { // 指定线程和节点状态的构造方法
+        this.waitStatus = waitStatus;
+        this.thread = thread;
+    }    
+}
+```
+
+​	Node是构成同步队列的基础，看一下Node的结构：
+
+![AQSNode结构.png](./pic/AQSNode结构.png)
+
+同步队列中首节点是获取到锁的节点，它在释放的时候会唤醒后继节点，后继节点获取到锁的时候,会把自己设为首节点。
+
+![AQSNode释放.png](./pic/AQSNode释放.png)
+
+​	现在我们可以清楚的知道这样几点：
+
+1.  **节点的数据结构，即AQS的静态内部类Node,节点的等待状态等信息**；
+2.  **同步队列是一个双向队列，AQS通过持有头尾指针管理同步队列**；
+
+​	那么，节点如何进行入队和出队是怎样做的了？实际上这对应着锁的获取和释放两个操作：获取锁失败进行入队操作，获取锁成功进行出队操作。
+
+##### 独占锁获取
+
+```java
+public final void acquire(int arg) {
+    //先看同步状态是否获取成功，如果成功则方法结束返回
+    //若失败则先调用addWaiter()方法再调用acquireQueued()方法
+    if (!tryAcquire(arg) &&
+        acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+        selfInterrupt();
+}
+// 获取失败的情况，增加一个等待者到队列中
+private Node addWaiter(Node mode) {
+    Node node = new Node(Thread.currentThread(), mode);
+    // Try the fast path of enq; backup to full enq on failure
+    Node pred = tail;
+    // 尾节点不为空的情况
+    if (pred != null) {
+        // 当前节点前一个为尾节点
+        node.prev = pred;
+        // 插入到末尾，返回
+        if (compareAndSetTail(pred, node)) {
+            pred.next = node;
+            return node;
+        }
+    }
+    // 尾节点为空，说明当前线程是第一个加入同步队列进行等待的线程
+    enq(node);
+    return node;
+}
+// 当尾节点为空，或者插入到末尾失败的情况
+private Node enq(final Node node) {
+    for (;;) {
+        Node t = tail;
+        if (t == null) { // Must initialize
+            // 节点为空，初始化队列，失败了说明有人初始化，自旋
+            if (compareAndSetHead(new Node()))
+                tail = head;
+        } else {
+            node.prev = t;
+            if (compareAndSetTail(t, node)) {
+                // 插入到末尾，如果失败了，自旋，只有成功才能返回
+                t.next = node;
+                return t;
+            }
+        }
+    }
+}
+// 排队获取锁
+final boolean acquireQueued(final Node node, int arg) {
+    boolean failed = true;
+    try {
+        boolean interrupted = false;
+        for (;;) {
+            // 获取前驱节点
+            final Node p = node.predecessor();
+            // 如果前驱节点是头节点且获取锁成功	
+            if (p == head && tryAcquire(arg)) {
+                // 将该节点设置为头节点,返回非中断式，也未失败
+                setHead(node);
+                p.next = null; // help GC
+                failed = false;
+                return interrupted;
+            }
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                parkAndCheckInterrupt())
+                interrupted = true;
+        }
+    } finally {
+        //中断的话，取消获取节点
+        if (failed)
+            cancelAcquire(node);
+    }
+}
+//获取失败的时候是否需要等待	
+private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
+	// 获取pred前置节点的等待状态
+    int ws = pred.waitStatus;
+    if (ws == Node.SIGNAL)
+        /*
+         * This node has already set status asking a release
+         * to signal it, so it can safely park.
+         * 前置节点状态是signal，那当前节点可以安全阻塞，因为前置节点承诺执行完之后会通知唤醒当前节点
+         */
+        return true;
+    if (ws > 0) {
+        /*
+         * Predecessor was cancelled. Skip over predecessors and
+         * indicate retry.
+         * 前置节点如果已经被取消了，则一直往前遍历直到前置节点不是取消状态，与此同时会修改链表关系
+         */
+        do {
+            node.prev = pred = pred.prev;
+        } while (pred.waitStatus > 0);
+        pred.next = node;
+    } else {
+        /*
+         * waitStatus must be 0 or PROPAGATE.  Indicate that we
+         * need a signal, but don't park yet.  Caller will need to
+         * retry to make sure it cannot acquire before parking.
+         * 前置节点是0或者propagate状态，这里通过CAS把前置节点状态改成signal,这里不返回true让当前节点阻塞，而是返回false，目的是让调用者再check一下当前线程是否能成功获取锁，失败的话再阻塞
+         */
+        compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
+    }
+    return false;
+}
+// 是否中断了
+private final boolean parkAndCheckInterrupt() {
+    // 阻塞当前线程，监事是当前sync对象
+    LockSupport.park(this);
+    return Thread.interrupted();
+}
+// 取消获取锁
+private void cancelAcquire(Node node) {
+    // Ignore if node doesn't exist
+    if (node == null)
+        return;
+    // 把当前节点的线程设为null
+    node.thread = null;
+
+    // Skip cancelled predecessors
+    Node pred = node.prev;
+    // 如果prde的ws > 0,直接跳过pred继续往前遍历,直到pred的ws <= 0
+    while (pred.waitStatus > 0)
+        node.prev = pred = pred.prev;
+
+    // predNext is the apparent node to unsplice. CASes below will
+    // fail if not, in which case, we lost race vs another cancel
+    // or signal, so no further action is necessary.
+    Node predNext = pred.next;
+
+    // Can use unconditional write instead of CAS here.
+    // After this atomic step, other Nodes can skip past us.
+    // Before, we are free of interference from other threads.
+    // 设置为取消状态
+    node.waitStatus = Node.CANCELLED;
+
+    // If we are the tail, remove ourselves.
+    // 如果node是尾节点,利用CAS把pred设为尾节点,predNext为null
+    if (node == tail && compareAndSetTail(node, pred)) {
+        compareAndSetNext(pred, predNext, null);
+    } else {
+        // If successor needs signal, try to set pred's next-link
+        // so it will get one. Otherwise wake it up to propagate.
+        // pred不是头结点 && pred的线程不为空 && pred.ws = singal
+        // 利用CAS把node的next设为pred的next节点
+        int ws;
+        if (pred != head &&
+            ((ws = pred.waitStatus) == Node.SIGNAL ||
+             (ws <= 0 && compareAndSetWaitStatus(pred, ws, Node.SIGNAL))) &&
+            pred.thread != null) {
+            Node next = node.next;
+            if (next != null && next.waitStatus <= 0)
+                compareAndSetNext(pred, predNext, next);
+        } else {
+            // node是头结点,唤起它的后继节点
+            unparkSuccessor(node);
+        }
+
+        node.next = node; // help GC
+    }
+}
+```
+
+​	经过上面的分析，独占式锁的获取过程也就是acquire()方法的执行流程如下图所示：
+
+![AQS独占锁流程.png](./pic/AQS独占锁流程.png)
+
+##### 独占锁释放
+
+```java
+public final boolean release(int arg) {
+    // 通过模板方法调用子类的tryRelease()释放
+    if (tryRelease(arg)) {
+        Node h = head;
+        if (h != null && h.waitStatus != 0)
+            unparkSuccessor(h);
+        return true;
+    }
+    return false;
+}
+// 醒等待的队列中的下一个节点的线程
+private void unparkSuccessor(Node node) {
+    /*
+     * If status is negative (i.e., possibly needing signal) try
+     * to clear in anticipation of signalling.  It is OK if this
+     * fails or if status is changed by waiting thread.
+     */
+	// 获取node的ws,如果ws<0,使用CAS把node的ws设为0,表示释放同步状态
+    int ws = node.waitStatus;
+    if (ws < 0)
+        compareAndSetWaitStatus(node, ws, 0);
+
+    /*
+     * Thread to unpark is held in successor, which is normally
+     * just the next node.  But if cancelled or apparently null,
+     * traverse backwards from tail to find the actual
+     * non-cancelled successor.
+     */
+	/**
+	获取node的后继节点s,根据条件s = null 或者 s.ws > 0,从同步队列的尾部开始遍历,
+     * 直到找到距node最近的满足ws <= 0的节点t,把t赋给s,唤醒s节点的线程
+     * 如果s不为null && s的ws <= 0,直接唤醒s的线程
+    */
+    Node s = node.next;
+    if (s == null || s.waitStatus > 0) {
+        s = null;
+        for (Node t = tail; t != null && t != node; t = t.prev)
+            if (t.waitStatus <= 0)
+                s = t;
+    }
+    if (s != null)
+        LockSupport.unpark(s.thread);
+}
+```
+
+##### 独占锁总结
+
+1.  线程获取锁失败，线程被封装成Node进行入队操作，核心方法在于addWaiter()和enq()，同时enq()完成对同步队列的头结点初始化工作以及CAS操作失败的重试
+
+2.  线程获取锁是一个自旋的过程，当且仅当 当前节点的前驱节点是头结点并且成功获得同步状态时，节点出队即该节点引用的线程获得锁，否则，当不满足条件时就会调用LookSupport.park()方法使得线程阻塞
+
+3. 释放锁的时候会唤醒后继节点
+
+​	总体来说：在获取同步状态时，AQS维护一个同步队列，获取同步状态失败的线程会加入到队列中进行自旋；移除队列（或停止自旋）的条件是前驱节点是头结点并且成功获得了同步状态。在释放同步状态时，同步器会调用unparkSuccessor()方法唤醒后继节点。
+
+
+
+https://www.jianshu.com/p/cc308d82cc71
+
+https://blog.csdn.net/qq_39241239/article/details/86934059
 
 
 
