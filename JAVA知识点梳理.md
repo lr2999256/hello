@@ -2606,7 +2606,7 @@ static final class Node {
 
 ​	那么，节点如何进行入队和出队是怎样做的了？实际上这对应着锁的获取和释放两个操作：获取锁失败进行入队操作，获取锁成功进行出队操作。
 
-##### 独占锁获取
+##### 独占锁获取（acquire）
 
 ```java
 public final void acquire(int arg) {
@@ -2773,7 +2773,7 @@ private void cancelAcquire(Node node) {
 
 ![AQS独占锁流程.png](./pic/AQS独占锁流程.png)
 
-##### 独占锁释放
+##### 独占锁释放（release）
 
 ```java
 public final boolean release(int arg) {
@@ -2830,6 +2830,217 @@ private void unparkSuccessor(Node node) {
 3. 释放锁的时候会唤醒后继节点
 
 ​	总体来说：在获取同步状态时，AQS维护一个同步队列，获取同步状态失败的线程会加入到队列中进行自旋；移除队列（或停止自旋）的条件是前驱节点是头结点并且成功获得了同步状态。在释放同步状态时，同步器会调用unparkSuccessor()方法唤醒后继节点。
+
+##### 超时等待获取锁（tryAcquireNanos）
+
+```java
+public final boolean tryAcquireNanos(int arg, long nanosTimeout)
+    throws InterruptedException {
+    if (Thread.interrupted())
+        throw new InterruptedException();
+    return tryAcquire(arg) ||
+        doAcquireNanos(arg, nanosTimeout);
+}
+
+/**
+ * The number of nanoseconds for which it is faster to spin
+ * rather than to use timed park. A rough estimate suffices
+ * to improve responsiveness with very short timeouts.
+ */
+static final long spinForTimeoutThreshold = 1000L;
+
+private boolean doAcquireNanos(int arg, long nanosTimeout)
+    throws InterruptedException {
+    if (nanosTimeout <= 0L)
+        return false;
+    // 算截止时间点
+    final long deadline = System.nanoTime() + nanosTimeout;
+    final Node node = addWaiter(Node.EXCLUSIVE);
+    boolean failed = true;
+    try {
+        for (;;) {
+            final Node p = node.predecessor();
+            if (p == head && tryAcquire(arg)) {
+                setHead(node);
+                p.next = null; // help GC
+                failed = false;
+                return true;
+            }
+            // 重算还有多久截止
+            nanosTimeout = deadline - System.nanoTime();
+            if (nanosTimeout <= 0L)
+                return false;
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                nanosTimeout > spinForTimeoutThreshold)
+                // 超过了1000ns,即1微秒，则等待后续的时间
+                LockSupport.parkNanos(this, nanosTimeout);
+            if (Thread.interrupted())
+                // 线程被中断抛出被中断异常
+                throw new InterruptedException();
+        }
+    } finally {
+        if (failed)
+            cancelAcquire(node);
+    }
+}
+```
+
+![AQS超时等待锁.png](./pic/AQS超时等待锁.png)
+
+##### 可中断式获取锁（acquireInterruptibly）
+
+```java
+public final void acquireInterruptibly(int arg)
+    throws InterruptedException {
+    // 线程中断直接返回
+    if (Thread.interrupted())
+        throw new InterruptedException();
+    // 首先获取一下锁，没获取到，调用再次获取方法
+    if (!tryAcquire(arg))
+        doAcquireInterruptibly(arg);
+}
+
+private void doAcquireInterruptibly(int arg)
+    throws InterruptedException {
+    // 加入独占式的状态的队列
+    final Node node = addWaiter(Node.EXCLUSIVE);
+    boolean failed = true;
+    try {
+        for (;;) {
+            final Node p = node.predecessor();
+            if (p == head && tryAcquire(arg)) {
+                setHead(node);
+                p.next = null; // help GC
+                failed = false;
+                return;
+            }
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                parkAndCheckInterrupt())
+                // 和独占锁唯一的区别，中断的情况，直接抛出异常，说明其可中断的
+                throw new InterruptedException();
+        }
+    } finally {
+        if (failed)
+            cancelAcquire(node);
+    }
+}
+```
+
+##### 共享锁的获取（acquireShared）
+
+```java
+public final void acquireShared(int arg) {
+    if (tryAcquireShared(arg) < 0)
+        doAcquireShared(arg);
+}
+
+private void doAcquireShared(int arg) {
+    final Node node = addWaiter(Node.SHARED);
+    boolean failed = true;
+    try {
+        boolean interrupted = false;
+        for (;;) {
+            final Node p = node.predecessor();
+            if (p == head) {
+                //留给子类实现，只要大于0就算获取成功
+                int r = tryAcquireShared(arg);
+                if (r >= 0) {
+                    setHeadAndPropagate(node, r);
+                    p.next = null; // help GC
+                    if (interrupted)
+                        selfInterrupt();
+                    failed = false;
+                    return;
+                }
+            }
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                parkAndCheckInterrupt())
+                interrupted = true;
+        }
+    } finally {
+        if (failed)
+            cancelAcquire(node);
+    }
+}
+
+private void setHeadAndPropagate(Node node, int propagate) {
+    Node h = head; // Record old head for check below
+    setHead(node);
+    /*
+     * Try to signal next queued node if:
+     *   Propagation was indicated by caller,
+     *     or was recorded (as h.waitStatus either before
+     *     or after setHead) by a previous operation
+     *     (note: this uses sign-check of waitStatus because
+     *      PROPAGATE status may transition to SIGNAL.)
+     * and
+     *   The next node is waiting in shared mode,
+     *     or we don't know, because it appears null
+     *
+     * The conservatism in both of these checks may cause
+     * unnecessary wake-ups, but only when there are multiple
+     * racing acquires/releases, so most need signals now or soon
+     * anyway.
+     */
+    if (propagate > 0 || h == null || h.waitStatus < 0 ||
+        (h = head) == null || h.waitStatus < 0) {
+        Node s = node.next;
+        if (s == null || s.isShared())
+            doReleaseShared();
+    }
+}
+```
+
+##### 共享锁的释放（releaseShared）
+
+```java
+public final boolean releaseShared(int arg) {
+    if (tryReleaseShared(arg)) {
+        doReleaseShared();
+        return true;
+    }
+    return false;
+}
+
+private void doReleaseShared() {
+    /*
+     * Ensure that a release propagates, even if there are other
+     * in-progress acquires/releases.  This proceeds in the usual
+     * way of trying to unparkSuccessor of head if it needs
+     * signal. But if it does not, status is set to PROPAGATE to
+     * ensure that upon release, propagation continues.
+     * Additionally, we must loop in case a new node is added
+     * while we are doing this. Also, unlike other uses of
+     * unparkSuccessor, we need to know if CAS to reset status
+     * fails, if so rechecking.
+     */
+    for (;;) {
+        Node h = head;
+        if (h != null && h != tail) {
+            int ws = h.waitStatus;
+            if (ws == Node.SIGNAL) {
+                if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
+                    continue;            // loop to recheck cases
+                unparkSuccessor(h);
+            }
+            else if (ws == 0 &&
+                     !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
+                continue;                // loop on failed CAS
+        }
+        if (h == head)                   // loop if head changed
+            break;
+    }
+}
+```
+
+
+
+
+
+
+
+
+
 
 
 
