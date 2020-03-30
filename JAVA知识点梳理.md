@@ -2962,7 +2962,7 @@ private void doAcquireShared(int arg) {
             cancelAcquire(node);
     }
 }
-
+// 设置头节点，传播唤醒
 private void setHeadAndPropagate(Node node, int propagate) {
     Node h = head; // Record old head for check below
     setHead(node);
@@ -2982,10 +2982,16 @@ private void setHeadAndPropagate(Node node, int propagate) {
      * racing acquires/releases, so most need signals now or soon
      * anyway.
      */
+    /*
+     * 这里有三种情况执行唤醒操作：1.propagate > 0,代表后继节点需要被唤醒
+     *                          2. h节点的ws < 0或者 h=null
+     *                          3. 新的头结点为空 或者 新的头结点的ws < 0
+     */
     if (propagate > 0 || h == null || h.waitStatus < 0 ||
         (h = head) == null || h.waitStatus < 0) {
         Node s = node.next;
         if (s == null || s.isShared())
+            // s=null 或者 s是共享模式,调用doReleaseShared方法唤醒后继线程
             doReleaseShared();
     }
 }
@@ -3002,6 +3008,19 @@ public final boolean releaseShared(int arg) {
     return false;
 }
 
+/*此方法的流程也比较简单，一句话：释放掉资源后，唤醒后继。
+跟独占模式下的release()相似，但有一点稍微需要注意：
+独占模式下的tryRelease()在完全释放掉资源（state=0）后，
+才会返回true去唤醒其他线程，这主要是基于独占下可重入的考量；
+而共享模式下的releaseShared()则没有这种要求，
+共享模式实质就是控制一定量的线程并发执行，
+那么拥有资源的线程在释放掉部分资源时就可以唤醒后继等待结点。
+例如，资源总量是13，A（5）和B（7）分别获取到资源并发运行，C（4）来时只剩1个资源
+就需要等待。A在运行过程中释放掉2个资源量，然后tryReleaseShared(2)返回true唤醒C，
+C一看只有3个仍不够继续等待；随后B又释放2个，tryReleaseShared(2)返回true唤醒C，
+C一看有5个够自己用了，然后C就可以跟A和B一起运行。
+而ReentrantReadWriteLock读锁的tryReleaseShared()只有在完全释放掉资源（state=0）才返回true，
+所以自定义同步器可以根据需要决定tryReleaseShared()的返回值。*/
 private void doReleaseShared() {
     /*
      * Ensure that a release propagates, even if there are other
@@ -3021,6 +3040,7 @@ private void doReleaseShared() {
             if (ws == Node.SIGNAL) {
                 if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
                     continue;            // loop to recheck cases
+                // 唤醒头结点的后继节点
                 unparkSuccessor(h);
             }
             else if (ws == 0 &&
@@ -3033,20 +3053,162 @@ private void doReleaseShared() {
 }
 ```
 
+#### ReentrantLock
 
+```java
+// 内部静态继承了同步器
+abstract static class Sync extends AbstractQueuedSynchronizer {
+    private static final long serialVersionUID = -5179523762034025860L;
 
+    /**
+     * Performs {@link Lock#lock}. The main reason for subclassing
+     * is to allow fast path for nonfair version.
+     */
+    // 由子类的公平锁和非公平锁去实现
+    abstract void lock();
 
+    /**
+     * Performs non-fair tryLock.  tryAcquire is implemented in
+     * subclasses, but both need nonfair try for trylock method.
+     */
+    // 默认非公平锁的获取
+    final boolean nonfairTryAcquire(int acquires) {
+        final Thread current = Thread.currentThread();
+        int c = getState();
+        if (c == 0) {
+            // 非锁状态可以CAS获取锁，这里大家都可以去抢锁，但是如果被别的线程抢了，返回false
+            if (compareAndSetState(0, acquires)) {
+                setExclusiveOwnerThread(current);
+                return true;
+            }
+        }
+        else if (current == getExclusiveOwnerThread()) {
+            // 自己已经获取了锁，信号量累加，可重入的概念
+            int nextc = c + acquires;
+            if (nextc < 0) // overflow
+                throw new Error("Maximum lock count exceeded");
+            setState(nextc);
+            return true;
+        }
+        return false;
+    }
+	// 释放锁
+    protected final boolean tryRelease(int releases) {
+        int c = getState() - releases;
+        if (Thread.currentThread() != getExclusiveOwnerThread())
+            throw new IllegalMonitorStateException();
+        boolean free = false;
+        if (c == 0) {
+            free = true;
+            setExclusiveOwnerThread(null);
+        }
+        setState(c);
+        return free;
+    }
 
+    protected final boolean isHeldExclusively() {
+        // While we must in general read state before owner,
+        // we don't need to do so to check if current thread is owner
+        return getExclusiveOwnerThread() == Thread.currentThread();
+    }
 
+    final ConditionObject newCondition() {
+        return new ConditionObject();
+    }
 
+    // Methods relayed from outer class
 
+    final Thread getOwner() {
+        return getState() == 0 ? null : getExclusiveOwnerThread();
+    }
 
+    final int getHoldCount() {
+        return isHeldExclusively() ? getState() : 0;
+    }
 
+    final boolean isLocked() {
+        return getState() != 0;
+    }
 
+    /**
+     * Reconstitutes the instance from a stream (that is, deserializes it).
+     */
+    private void readObject(java.io.ObjectInputStream s)
+        throws java.io.IOException, ClassNotFoundException {
+        s.defaultReadObject();
+        setState(0); // reset to unlocked state
+    }
+}
+// 公平锁
+static final class FairSync extends Sync {
+    private static final long serialVersionUID = -3000897897090466540L;
 
-https://www.jianshu.com/p/cc308d82cc71
+    final void lock() {
+        // 获取锁
+        acquire(1);
+    }
 
-https://blog.csdn.net/qq_39241239/article/details/86934059
+    /**
+     * Fair version of tryAcquire.  Don't grant access unless
+     * recursive call or no waiters or is first.
+     */
+    // 模板方法，看是否能获取到锁
+    protected final boolean tryAcquire(int acquires) {
+        final Thread current = Thread.currentThread();
+        int c = getState();
+        if (c == 0) {
+            // 公平锁重点，判断是否队列中有节点在处理，如果有，则不会返回true
+            if (!hasQueuedPredecessors() &&
+                compareAndSetState(0, acquires)) {
+                setExclusiveOwnerThread(current);
+                return true;
+            }
+        }
+        else if (current == getExclusiveOwnerThread()) {
+            int nextc = c + acquires;
+            if (nextc < 0)
+                throw new Error("Maximum lock count exceeded");
+            setState(nextc);
+            return true;
+        }
+        return false;
+    }
+}
+public final boolean hasQueuedPredecessors() {
+    // The correctness of this depends on head being initialized
+    // before tail and on head.next being accurate if the current
+    // thread is first in queue.
+    Node t = tail; // Read fields in reverse initialization order
+    Node h = head;
+    Node s;
+    // 头结点为尾节点，返回false，后续可以处理
+    // 头结点下一个节点为空，其他线程第一次正在入队时，可能会出现。见AQS的enq方法，compareAndSetHead(node)完成，还没执行tail=head语句时，此时tail=null,head=newNode,head.next=null。
+    // 如果h!=t成立，head.next != null，则判断head.next是否是当前线程，如果是返回false
+    return h != t &&
+        ((s = h.next) == null || s.thread != Thread.currentThread());
+}
+// 非公平锁，默认实现
+static final class NonfairSync extends Sync {
+    private static final long serialVersionUID = 7316153563782823691L;
+
+    /**
+     * Performs lock.  Try immediate barge, backing up to normal
+     * acquire on failure.
+     */
+    final void lock() {
+        if (compareAndSetState(0, 1))
+            setExclusiveOwnerThread(Thread.currentThread());
+        else
+            acquire(1);
+    }
+
+    protected final boolean tryAcquire(int acquires) {
+        return nonfairTryAcquire(acquires);
+    }
+}
+```
+
+#### ReentrantReadWriteLock
 
 
 
