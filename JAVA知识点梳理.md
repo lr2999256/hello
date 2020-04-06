@@ -3210,9 +3210,807 @@ static final class NonfairSync extends Sync {
 
 #### ReentrantReadWriteLock
 
+​	ReentrantReadWriteLock是一个可重入读写分离锁，可以认为是在ReentrantLock上的扩展，但是二者没有继承关系，相比于ReentrantLock将读和写分离，读读不互斥，可以提高并发环境下的效率，同样也是基于AQS实现，源码比ReentrantLock要复杂一些。
 
+![读写锁位置.png](./pic/读写锁位置.png)
+
+假设当前同步状态值为S，get和set的操作如下：
+
+1. 获取写状态：S&0x0000FFFF:将高16位全部抹去
+2. 获取读状态：S>>>16:无符号补0，右移16位
+3. 写状态加1： S+1
+4. 读状态加1：S+（1<<16）即S + 0x00010000
+
+​	在代码层的判断中，如果S不等于0，当写状态（S&0x0000FFFF），而读状态（S>>>16）大于0，则表示该读写锁的读锁已被获取。
+
+```java
+abstract static class Sync extends AbstractQueuedSynchronizer {
+    static final int SHARED_SHIFT   = 16;
+    // 由于读锁用高位部分，所以读锁个数加1，其实是状态值加 2^16
+    static final int SHARED_UNIT    = (1 << SHARED_SHIFT);
+    // 写锁的可重入的最大次数、读锁允许的最大数量
+    static final int MAX_COUNT      = (1 << SHARED_SHIFT) - 1;
+    // 写锁的掩码，用于状态的低16位有效值
+    static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;
+    // 读锁计数，当前持有读锁的线程数， S>>>16:无符号补0，右移16位
+    static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }
+    // 写锁的计数，也就是它的重入次数， S&0x0000FFFF:将高16位全部抹去
+    static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
+    
+    /**
+     * 每个线程特定的 read 持有计数。存放在ThreadLocal，不需要是线程安全的。
+     */
+    static final class HoldCounter {
+        int count = 0;
+        // 使用id而不是引用是为了避免保留垃圾。注意这是个常量。
+        final long tid = Thread.currentThread().getId();
+    }
+    /**
+     * 采用继承是为了重写 initialValue 方法，这样就不用进行这样的处理：
+     * 如果ThreadLocal没有当前线程的计数，则new一个，再放进ThreadLocal里。
+     * 可以直接调用 get。
+     * */
+    static final class ThreadLocalHoldCounter
+        extends ThreadLocal<HoldCounter> {
+        public HoldCounter initialValue() {
+            return new HoldCounter();
+        }
+    }
+    /**
+     * 保存当前线程重入读锁的次数的容器。在读锁重入次数为 0 时移除。
+     */
+    private transient ThreadLocalHoldCounter readHolds;
+    /**
+     * 最近一个成功获取读锁的线程的计数。这省却了ThreadLocal查找，
+     * 通常情况下，下一个释放线程是最后一个获取线程。这不是 volatile 的，
+     * 因为它仅用于试探的，线程进行缓存也是可以的
+     * （因为判断是否是当前线程是通过线程id来比较的）。
+     */
+    private transient HoldCounter cachedHoldCounter;
+    /**
+     * firstReader是这样一个特殊线程：它是最后一个把 共享计数 从 0 改为 1 的
+     * （在锁空闲的时候），而且从那之后还没有释放读锁的。如果不存在则为null。
+     * firstReaderHoldCount 是 firstReader 的重入计数。
+     *
+     * firstReader 不能导致保留垃圾，因此在 tryReleaseShared 里设置为null，
+     * 除非线程异常终止，没有释放读锁。
+     *
+     * 作用是在跟踪无竞争的读锁计数时非常便宜。
+     *
+     * firstReader及其计数firstReaderHoldCount是不会放入 readHolds 的。
+     */
+    private transient Thread firstReader = null;
+    private transient int firstReaderHoldCount;
+    Sync() {
+        readHolds = new ThreadLocalHoldCounter();
+        setState(getState()); // 确保 readHolds 的内存可见性，利用 volatile 写的内存语义。
+    }
+}
+//公平同步器
+static final class FairSync extends Sync {
+    private static final long serialVersionUID = -2274990926593161451L;
+    final boolean writerShouldBlock() {
+        return hasQueuedPredecessors();
+    }
+    final boolean readerShouldBlock() {
+        return hasQueuedPredecessors();
+    }
+}
+//判断队列中是否还有元素，公平锁的特点是，有队列必须排队
+public final boolean hasQueuedPredecessors() {
+    // The correctness of this depends on head being initialized
+    // before tail and on head.next being accurate if the current
+    // thread is first in queue.
+    Node t = tail; // Read fields in reverse initialization order
+    Node h = head;
+    Node s;
+    return h != t &&
+        ((s = h.next) == null || s.thread != Thread.currentThread());
+}
+//非公平锁
+static final class NonfairSync extends Sync {
+    private static final long serialVersionUID = -8159625535654395037L;
+    final boolean writerShouldBlock() {
+        //非公平，写锁不需要等待
+        return false; // writers can always barge
+    }
+    final boolean readerShouldBlock() {
+        /* As a heuristic to avoid indefinite writer starvation,
+         * block if the thread that momentarily appears to be head
+         * of queue, if one exists, is a waiting writer.  This is
+         * only a probabilistic effect since a new reader will not
+         * block if there is a waiting writer behind other enabled
+         * readers that have not yet drained from the queue.
+         */
+        return apparentlyFirstQueuedIsExclusive();
+    }
+}
+/* 如果头节点的下一个节点是独占线程，为了防止独占线程也就是写线程饥饿等待，
+ * 则后入线程应该排队，否则可以闯入
+ */
+final boolean apparentlyFirstQueuedIsExclusive() {
+    Node h, s;
+    return (h = head) != null &&
+        (s = h.next)  != null &&
+        !s.isShared()         &&
+        s.thread != null;
+}
+```
+
+##### 写锁的获取
+
+```java
+/**
+ * 写锁为0，读锁不为0    或者写锁不为0，且当前线程不是已获取独占锁的线程，锁获取失败。
+ * 写锁数量已达到最大值，写锁获取失败。
+ * 当前线程应该阻塞，或者设置同步状态state失败，获取锁失败
+*/
+protected final boolean tryAcquire(int acquires) {
+    /*
+     * Walkthrough:
+     * 1. If read count nonzero or write count nonzero
+     *    and owner is a different thread, fail.
+     * 2. If count would saturate, fail. (This can only
+     *    happen if count is already nonzero.)
+     * 3. Otherwise, this thread is eligible for lock if
+     *    it is either a reentrant acquire or
+     *    queue policy allows it. If so, update state
+     *    and set owner.
+     */
+    Thread current = Thread.currentThread();
+    int c = getState();
+    int w = exclusiveCount(c);
+    if (c != 0) {
+        // (Note: if c != 0 and w == 0 then shared count != 0)
+        // 1.写锁为0，读锁不为0    或者写锁不为0，且当前线程不是已获取独占锁的线程，锁获取失败
+        if (w == 0 || current != getExclusiveOwnerThread())
+            return false;
+        // 2. 写锁数量已达到最大值，写锁获取失败
+        if (w + exclusiveCount(acquires) > MAX_COUNT)
+            throw new Error("Maximum lock count exceeded");
+        // Reentrant acquire
+        setState(c + acquires);
+        return true;
+    }
+    // 3.当前线程应该阻塞，或者设置同步状态state失败，获取锁失败。
+    if (writerShouldBlock() ||
+        !compareAndSetState(c, c + acquires))
+        return false;
+    setExclusiveOwnerThread(current);
+    return true;
+}
+```
+
+##### 写锁的释放
+
+```java
+protected final boolean tryRelease(int releases) {
+    // 如果当前线程不是持有锁的独占线程，抛出异常
+    if (!isHeldExclusively())
+        throw new IllegalMonitorStateException();
+    int nextc = getState() - releases;
+    boolean free = exclusiveCount(nextc) == 0;
+    // 因为可重入，只有当exclusiveCount(nextc) == 0时候，才会真正释放锁
+    if (free)
+        setExclusiveOwnerThread(null);
+    setState(nextc);
+    return free;
+}
+```
+
+##### 读锁的获取
+
+```java
+protected final int tryAcquireShared(int unused) {
+    /*
+     * Walkthrough:
+     * 1. If write lock held by another thread, fail.
+     * 2. Otherwise, this thread is eligible for
+     *    lock wrt state, so ask if it should block
+     *    because of queue policy. If not, try
+     *    to grant by CASing state and updating count.
+     *    Note that step does not check for reentrant
+     *    acquires, which is postponed to full version
+     *    to avoid having to check hold count in
+     *    the more typical non-reentrant case.
+     * 3. If step 2 fails either because thread
+     *    apparently not eligible or CAS fails or count
+     *    saturated, chain to version with full retry loop.
+     */
+    Thread current = Thread.currentThread();
+    int c = getState();
+    // 1.有线程持有写锁，且该线程不是当前线程，获取锁失败，因为存在锁降级
+    if (exclusiveCount(c) != 0 &&
+        getExclusiveOwnerThread() != current)
+        return -1;
+    int r = sharedCount(c);
+    // 2.如果不应该阻塞，且读锁数<MAX_COUNT且设置同步状态state成功，获取锁成功。
+    if (!readerShouldBlock() &&
+        r < MAX_COUNT &&
+        compareAndSetState(c, c + SHARED_UNIT)) {
+        if (r == 0) {
+            // 第一次被线程获取
+            firstReader = current;
+            firstReaderHoldCount = 1;
+        } else if (firstReader == current) {
+            // 更新首次获取锁线程HoldCount
+            firstReaderHoldCount++;
+        } else {
+            // 更新非首次获取锁线程的HoldCount,先查缓存
+            HoldCounter rh = cachedHoldCounter;
+            if (rh == null || rh.tid != getThreadId(current))
+                // 缓存没有命中，从ThreadLocal中获取
+                cachedHoldCounter = rh = readHolds.get();
+            else if (rh.count == 0)
+                readHolds.set(rh);
+            rh.count++;
+        }
+        return 1;
+    }
+    // 一次获取读锁失败后，尝试循环获取
+    return fullTryAcquireShared(current);
+}
+final int fullTryAcquireShared(Thread current) {
+    /*
+     * This code is in part redundant with that in
+     * tryAcquireShared but is simpler overall by not
+     * complicating tryAcquireShared with interactions between
+     * retries and lazily reading hold counts.
+     */
+    HoldCounter rh = null;
+    for (;;) {
+        int c = getState();
+        /**
+         * 如果是其他线程获取了写锁，那么把当前线程阻塞
+         * 如果是当前线程获取了写锁，不阻塞，否则会造成死锁
+         * 从这里可以看到ReentrantReadWriteLock允许锁降级
+         */
+        if (exclusiveCount(c) != 0) {
+            if (getExclusiveOwnerThread() != current)
+                return -1;
+            // else we hold the exclusive lock; blocking here
+            // would cause deadlock.
+        } else if (readerShouldBlock()) {
+            /**
+             * 进入这里说明，同步队列的头结点的后继有一个竞争写锁的线程
+             * 所以这里有一个锁让步的操作，即让写锁先获取
+             * 如果是firstReader必然是重入，或者rh.count>0也必然是重入
+             * 对于读锁重入是允许死循环直到获取锁成功的，不然会导致死锁
+             * 但是如果rh.count = 0就说明，这个线程是第一次获取读锁
+             * 为了防止写饥饿，直接将他们重新扔会同步队列，而且这些阻塞不会导致死锁
+             */
+            // Make sure we're not acquiring read lock reentrantly
+            if (firstReader == current) {
+                // assert firstReaderHoldCount > 0;
+            } else {
+                if (rh == null) {
+                    rh = cachedHoldCounter;
+                    if (rh == null || rh.tid != getThreadId(current)) {
+                        rh = readHolds.get();
+                        if (rh.count == 0)
+                            readHolds.remove();
+                    }
+                }
+                if (rh.count == 0)
+                    return -1;
+            }
+        }
+        if (sharedCount(c) == MAX_COUNT)
+            throw new Error("Maximum lock count exceeded");
+        if (compareAndSetState(c, c + SHARED_UNIT)) {
+            if (sharedCount(c) == 0) {
+                firstReader = current;
+                firstReaderHoldCount = 1;
+            } else if (firstReader == current) {
+                firstReaderHoldCount++;
+            } else {
+                if (rh == null)
+                    rh = cachedHoldCounter;
+                if (rh == null || rh.tid != getThreadId(current))
+                    rh = readHolds.get();
+                else if (rh.count == 0)
+                    readHolds.set(rh);
+                rh.count++;
+                cachedHoldCounter = rh; // cache for release
+            }
+            return 1;
+        }
+    }
+}
+```
+
+##### 读锁的释放
+
+```java
+protected final boolean tryReleaseShared(int unused) {
+    // 获取当前线程
+    Thread current = Thread.currentThread();
+    if (firstReader == current) { // 当前线程为第一个读线程
+        // assert firstReaderHoldCount > 0;
+        if (firstReaderHoldCount == 1) // 读线程占用的资源数为1
+            firstReader = null;
+        else // 减少占用的资源
+            firstReaderHoldCount--;
+    } else { // 当前线程不为第一个读线程
+        // 获取缓存的计数器
+        HoldCounter rh = cachedHoldCounter;
+        if (rh == null || rh.tid != getThreadId(current)) // 计数器为空或者计数器的tid不为当前正在运行的线程的tid
+            // 获取当前线程对应的计数器
+            rh = readHolds.get();
+        // 获取计数
+        int count = rh.count;
+        if (count <= 1) { // 计数小于等于1
+            // 移除
+            readHolds.remove();
+            if (count <= 0) // 计数小于等于0，抛出异常
+                throw unmatchedUnlockException();
+        }
+        // 减少计数
+        --rh.count;
+    }
+    for (;;) { // 无限循环
+        // 获取状态
+        int c = getState();
+        // 获取状态
+        int nextc = c - SHARED_UNIT;
+        if (compareAndSetState(c, nextc)) // 比较并进行设置
+            // Releasing the read lock has no effect on readers,
+            // but it may allow waiting writers to proceed if
+            // both read and write locks are now free.
+            return nextc == 0;
+    }
+}
+```
+
+##### 总结
+
+​	通过上面的源码分析，我们可以发现一个现象：
+
+​	在线程持有读锁的情况下，该线程不能取得写锁(因为获取写锁的时候，如果发现当前的读锁被占用，就马上获取失败，不管读锁是不是被当前线程持有)。
+
+​	在线程持有写锁的情况下，该线程可以继续获取读锁（获取读锁时如果发现写锁被占用，只有写锁没有被当前线程占用的情况才会获取失败）。
+
+​	仔细想想，这个设计是合理的：因为当线程获取读锁的时候，可能有其他线程同时也在持有读锁，因此不能把获取读锁的线程“升级”为写锁；而对于获得写锁的线程，它一定独占了读写锁，因此可以继续让它获取读锁，当它同时获取了写锁和读锁后，还可以先释放写锁继续持有读锁，这样一个写锁就“降级”为了读锁。
+
+​	综上：一个线程要想同时持有写锁和读锁，必须先获取写锁再获取读锁；写锁可以“降级”为读锁；读锁不能“升级”为写锁。
+
+### ThreadLocal
+
+​	ThreadLoal 变量，线程局部变量，同一个 ThreadLocal 所包含的对象，在不同的 Thread 中有不同的副本。这里有几点需要注意：
+
+- 因为每个 Thread 内有自己的实例副本，且该副本只能由当前 Thread 使用。这是也是 ThreadLocal 命名的由来。
+- 既然每个 Thread 有自己的实例副本，且其它 Thread 不可访问，那就不存在多线程间共享的问题。
+
+ThreadLocal 提供了线程本地的实例。它与普通变量的区别在于，每个使用该变量的线程都会初始化一个完全独立的实例副本。ThreadLocal 变量通常被private static修饰。当一个线程结束时，它所使用的所有 ThreadLocal 相对的实例副本都可被回收。
+
+总的来说，ThreadLocal 适用于每个线程需要自己独立的实例且该实例需要在多个方法中被使用，也即变量在线程间隔离而在方法或类间共享的场景。
+
+#### ThreadLocal原理
+
+##### 构造方法
+
+```java
+public class ThreadLocal<T> {
+    /**
+     * ThreadLocals rely on per-thread linear-probe hash maps attached
+     * to each thread (Thread.threadLocals and
+     * inheritableThreadLocals).  The ThreadLocal objects act as keys,
+     * searched via threadLocalHashCode.  This is a custom hash code
+     * (useful only within ThreadLocalMaps) that eliminates collisions
+     * in the common case where consecutively constructed ThreadLocals
+     * are used by the same threads, while remaining well-behaved in
+     * less common cases.
+     */
+    private final int threadLocalHashCode = nextHashCode();
+
+    /**
+     * The next hash code to be given out. Updated atomically. Starts at
+     * zero.
+     */
+    private static AtomicInteger nextHashCode =
+        new AtomicInteger();
+
+    /**
+     * The difference between successively generated hash codes - turns
+     * implicit sequential thread-local IDs into near-optimally spread
+     * multiplicative hash values for power-of-two-sized tables.
+     */
+    private static final int HASH_INCREMENT = 0x61c88647;
+
+    /**
+     * Returns the next hash code.
+     */
+    private static int nextHashCode() {
+        return nextHashCode.getAndAdd(HASH_INCREMENT);
+    }
+
+    /**
+     * Returns the current thread's "initial value" for this
+     * thread-local variable.  This method will be invoked the first
+     * time a thread accesses the variable with the {@link #get}
+     * method, unless the thread previously invoked the {@link #set}
+     * method, in which case the {@code initialValue} method will not
+     * be invoked for the thread.  Normally, this method is invoked at
+     * most once per thread, but it may be invoked again in case of
+     * subsequent invocations of {@link #remove} followed by {@link #get}.
+     *
+     * <p>This implementation simply returns {@code null}; if the
+     * programmer desires thread-local variables to have an initial
+     * value other than {@code null}, {@code ThreadLocal} must be
+     * subclassed, and this method overridden.  Typically, an
+     * anonymous inner class will be used.
+     *
+     * @return the initial value for this thread-local
+     */
+    protected T initialValue() {
+        return null;
+    }
+
+    /**
+     * Creates a thread local variable. The initial value of the variable is
+     * determined by invoking the {@code get} method on the {@code Supplier}.
+     *
+     * @param <S> the type of the thread local's value
+     * @param supplier the supplier to be used to determine the initial value
+     * @return a new thread local variable
+     * @throws NullPointerException if the specified supplier is null
+     * @since 1.8
+     */
+    public static <S> ThreadLocal<S> withInitial(Supplier<? extends S> supplier) {
+        return new SuppliedThreadLocal<>(supplier);
+    }
+
+    /**
+     * Creates a thread local variable.
+     * @see #withInitial(java.util.function.Supplier)
+     */
+    public ThreadLocal() {
+    }
+}
+```
+
+##### set方法
+
+```java
+public void set(T value) {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+}
+
+void createMap(Thread t, T firstValue) {
+    t.threadLocals = new ThreadLocalMap(this, firstValue);
+}
+```
+
+##### get方法
+
+```java
+ public T get() {
+     Thread t = Thread.currentThread();
+     ThreadLocalMap map = getMap(t);
+     if (map != null) {
+         ThreadLocalMap.Entry e = map.getEntry(this);
+         if (e != null) {
+             @SuppressWarnings("unchecked")
+             T result = (T)e.value;
+             return result;
+         }
+     }
+     return setInitialValue();
+ }
+
+ ThreadLocalMap getMap(Thread t) {
+     return t.threadLocals;
+ }
+
+private T setInitialValue() {
+    T value = initialValue();
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+    return value;
+}
+
+```
+
+​	到了这里，我们可以看出，每个Thread里面都有一个ThreadLocal.ThreadLocalMap成员变量，也就是说每个线程通过ThreadLocal.ThreadLocalMap与ThreadLocal相绑定，这样可以确保每个线程访问到的thread-local variable都是本线程的。
+
+##### ThreadLocalMap
+
+​	ThreadLocalMap是线程的私有成员变量。我理解这样做是为了避免多线程竞争，因为放在Thread对象中就相当于线程私有了，处理的时候不需要加锁。由于ThreadLocal本身的设计就是变量不与其他线程共享，不需要其他线程访问本对象的变量，放在Thread对象中不会有问题。
+
+​	Entry是一个以ThreadLocal为key，Object为value的键值对。需要注意的是，threadLocal是弱引用，即使线程正在执行中，只要ThreadLocal对象引用被置成null, Entry的Key就会自动在下一次YGC时被垃圾回收。而在 ThreadLocal使用set()和get()时，又会自动地将那些 key==null 的value置为null，使value能够被垃圾回收，避免内存泄漏。
+
+```java
+static class Entry extends WeakReference<ThreadLocal<?>> {
+    /** The value associated with this ThreadLocal. */
+    Object value;
+
+    Entry(ThreadLocal<?> k, Object v) {
+        super(k);
+        value = v;
+    }
+}
+```
+
+###### set方法
+
+```java
+private void set(ThreadLocal<?> key, Object value) { 
+    Entry[] tab = table;
+    int len = tab.length;
+    // 定位Entry存放的位置
+    int i = key.threadLocalHashCode & (len-1);
+    // 处理hash冲突的情况，这里采用的是开放地址法
+    for (Entry e = tab[i];
+         e != null;
+         e = tab[i = nextIndex(i, len)]) {
+        ThreadLocal<?> k = e.get();
+        //更新
+        if (k == key) {
+            e.value = value;
+            return;
+        }
+        if (k == null) {
+            replaceStaleEntry(key, value, i);
+            return;
+        }
+    }
+    // 新建entry并插入
+    tab[i] = new Entry(key, value);
+    int sz = ++size;
+    // 清除脏数据，扩容
+    if (!cleanSomeSlots(i, sz) && sz >= threshold)
+        rehash();
+}
+```
+
+###### get方法
+
+```java
+private Entry getEntry(ThreadLocal<?> key) {
+    // 确定entry位置
+    int i = key.threadLocalHashCode & (table.length - 1);
+    Entry e = table[i];
+    // 命中
+    if (e != null && e.get() == key)
+        return e;
+    else
+        // 存在hash冲突，继续查找
+        return getEntryAfterMiss(key, i, e);
+}
+
+private Entry getEntryAfterMiss(ThreadLocal<?> key, int i, Entry e) {
+    Entry[] tab = table;
+    int len = tab.length;
+
+    while (e != null) {
+        ThreadLocal<?> k = e.get();
+        //找到entry
+        if (k == key)
+            return e;
+        // 脏数据处理
+        if (k == null)
+            expungeStaleEntry(i);
+        else
+            //遍历
+            i = nextIndex(i, len);
+        e = tab[i];
+    }
+    return null;
+}
+```
+
+###### remove方法
+
+```java
+private void remove(ThreadLocal<?> key) {
+    Entry[] tab = table;
+    int len = tab.length;
+    int i = key.threadLocalHashCode & (len-1);
+    for (Entry e = tab[i];
+         e != null;
+         e = tab[i = nextIndex(i, len)]) {
+        if (e.get() == key) {
+            //清空key
+            e.clear();
+            //清空value
+            expungeStaleEntry(i);
+            return;
+        }
+    }
+}
+```
+
+##### 创建可继承的ThreadLocalMap
+
+```java
+static ThreadLocalMap createInheritedMap(ThreadLocalMap parentMap) {
+    return new ThreadLocalMap(parentMap);
+}
+
+private ThreadLocalMap(ThreadLocalMap parentMap) {
+    Entry[] parentTable = parentMap.table;
+    int len = parentTable.length;
+    setThreshold(len);
+    table = new Entry[len];
+
+    for (int j = 0; j < len; j++) {
+        Entry e = parentTable[j];
+        if (e != null) {
+            @SuppressWarnings("unchecked")
+            ThreadLocal<Object> key = (ThreadLocal<Object>) e.get();
+            if (key != null) {
+                Object value = key.childValue(e.value);
+                Entry c = new Entry(key, value);
+                int h = key.threadLocalHashCode & (len - 1);
+                while (table[h] != null)
+                    h = nextIndex(h, len);
+                table[h] = c;
+                size++;
+            }
+        }
+    }
+}
+```
+
+##### ThreadLocal注意事项
+
+###### 脏数据
+
+线程复用会产生脏数据。由于结程池会重用Thread对象，那么与Thread绑定的类的静态属性ThreadLocal变量也会被重用。如果在实现的线程run()方法体中不显式地调用remove() 清理与线程相关的ThreadLocal信息，那么倘若下一个结程不调用set() 设置初始值，就可能get() 到重用的线程信息，包括 ThreadLocal所关联的线程对象的value值。
+
+###### 内存泄漏
+
+通常我们会使用使用static关键字来修饰ThreadLocal（这也是在源码注释中所推荐的）。在此场景下，其生命周期就不会随着线程结束而结束，寄希望于ThreadLocal对象失去引用后，触发弱引用机制来回收Entry的Value就不现实了。如果不进行remove() 操作，那么这个线程执行完成后，通过ThreadLocal对象持有的对象是不会被释放的。
+
+以上两个问题的解决办法很简单，就是在每次用完ThreadLocal时， 必须要及时调用 remove()方法清理。
+
+###### 父子线程共享线程变量
+
+很多场景下通过ThreadLocal来透传全局上下文，会发现子线程的value和主线程不一致。比如用ThreadLocal来存储监控系统的某个标记位，暂且命名为traceId。某次请求下所有的traceld都是一致的，以获得可以统一解析的日志文件。但在实际开发过程中，发现子线程里的traceld为null，跟主线程的并不一致。这就需要使用InheritableThreadLocal来解决父子线程之间共享线程变量的问题，使整个连接过程中的traceId一致。
 
 ### 实现多线程的方法
+
+##### 继承Thread类创建线程
+
+​	Thread类本质上是实现了Runnable接口的一个实例，代表一个线程的实例。启动线程的唯一方法就是通过Thread类的start()实例方法。start()方法是一个native方法，它将启动一个新线程，并执行run()方法。这种方式实现多线程很简单，通过自己的类直接extend Thread，并复写run()方法，就可以启动新线程并执行自己定义的run()方法。例如：
+
+```java
+public class MyThread extends Thread {  
+　　public void run() {  
+　　 System.out.println("MyThread.run()");  
+　　}  
+}
+```
+
+##### 实现Runnable接口创建线程
+
+​	如果自己的类已经extends另一个类，就无法直接extends Thread，此时，可以实现一个Runnable接口，如下：
+
+```java
+public class MyThread extends OtherClass implements Runnable {  
+　　public void run() {  
+　　 System.out.println("MyThread.run()");  
+　　}  
+}
+```
+
+##### 实现Callable接口通过FutureTask包装器来创建Thread线程
+
+```java
+public interface Callable<V>   { 
+  V call（） throws Exception;   
+}
+public class SomeCallable<V> extends OtherClass implements Callable<V> {
+    @Override
+    public V call() throws Exception {
+        // TODO Auto-generated method stub
+        return null;
+    }
+}
+Callable<V> oneCallable = new SomeCallable<V>();   
+//由Callable<Integer>创建一个FutureTask<Integer>对象：   
+FutureTask<V> oneTask = new FutureTask<V>(oneCallable);   
+//注释：FutureTask<Integer>是一个包装器，它通过接受Callable<Integer>来创建，它同时实现了Future和Runnable接口。 
+//由FutureTask<Integer>创建一个Thread对象：   
+Thread oneThread = new Thread(oneTask);   
+oneThread.start();
+```
+
+##### 使用ExecutorService、Callable、Future实现有返回结果的线程
+
+​	ExecutorService、Callable、Future三个接口实际上都是属于Executor框架。返回结果的线程是在JDK1.5中引入的新特征，有了这种特征就不需要再为了得到返回值而大费周折了。而且自己实现了也可能漏洞百出。可返回值的任务必须实现Callable接口。类似的，无返回值的任务必须实现Runnable接口。执行Callable任务后，可以获取一个Future的对象，在该对象上调用get就可以获取到Callable任务返回的Object了。
+
+​	注意：get方法是阻塞的，即：线程无返回结果，get方法会一直等待。再结合线程池接口ExecutorService就可以实现传说中有返回结果的多线程了。
+
+​	下面提供了一个完整的有返回结果的多线程测试例子，在JDK1.5下验证过没问题可以直接使用。代码如下
+
+```java
+import java.util.concurrent.*;  
+import java.util.Date;  
+import java.util.List;  
+import java.util.ArrayList;  
+  
+/** 
+* 有返回值的线程 
+*/  
+@SuppressWarnings("unchecked")  
+public class Test {  
+public static void main(String[] args) throws ExecutionException,  InterruptedException {  
+   System.out.println("----程序开始运行----");  
+   Date date1 = new Date();  
+  
+   int taskSize = 5;  
+   // 创建一个线程池  
+   ExecutorService pool = Executors.newFixedThreadPool(taskSize);  
+   // 创建多个有返回值的任务  
+   List<Future> list = new ArrayList<Future>();  
+   for (int i = 0; i < taskSize; i++) {  
+    Callable c = new MyCallable(i + " ");  
+    // 执行任务并获取Future对象  
+    Future f = pool.submit(c);  
+    // System.out.println(">>>" + f.get().toString());  
+    list.add(f);  
+   }  
+   // 关闭线程池  
+   pool.shutdown();  
+  
+   // 获取所有并发任务的运行结果  
+   for (Future f : list) {  
+    // 从Future对象上获取任务的返回值，并输出到控制台  
+    System.out.println(">>>" + f.get().toString());  
+   }  
+  
+   Date date2 = new Date();  
+   System.out.println("----程序结束运行----，程序运行时间【"  
+     + (date2.getTime() - date1.getTime()) + "毫秒】");  
+}  
+}  
+  
+class MyCallable implements Callable<Object> {  
+	private String taskNum;  
+  
+    MyCallable(String taskNum) {  
+       this.taskNum = taskNum;  
+    }  
+
+    public Object call() throws Exception {  
+       System.out.println(">>>" + taskNum + "任务启动");  
+       Date dateTmp1 = new Date();  
+       Thread.sleep(1000);  
+       Date dateTmp2 = new Date();  
+       long time = dateTmp2.getTime() - dateTmp1.getTime();  
+       System.out.println(">>>" + taskNum + "任务终止");  
+       return taskNum + "任务返回运行结果,当前任务时间【" + time + "毫秒】";  
+    }  
+}
+```
+
+### ThreadPoolExecutor
+
+线程池的优势：
+
+1. 降低创建线程和销毁线程的性能开销
+2. 提高响应速度，当有新任务需要执行是不需要等待线程创建就可以立马执行
+3. 合理的设置线程池大小可以避免因为线程数超过硬件资源瓶颈带来的问题
+
+
+
+https://www.jianshu.com/p/a977ab6704d7
+
+
+
+
+
+
 
 
 
