@@ -5,21 +5,24 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 
+import java.util.stream.IntStream;
+
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class TimeClientHandler extends ChannelInboundHandlerAdapter {
 
-    private final ByteBuf firstMessage;
+    private final byte[] req = ("QUERY Time ORDER" + System.getProperty("line.separator")).getBytes();
 
     public TimeClientHandler() {
-        byte[] req = "QUERY Time ORDER".getBytes();
-        firstMessage = Unpooled.buffer(req.length);
-        firstMessage.writeBytes(req);
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        ctx.writeAndFlush(firstMessage);
+        IntStream.range(0,100).forEach((i)->{
+            ByteBuf firstMessage = Unpooled.buffer(req.length);
+            firstMessage.writeBytes(req);
+            ctx.writeAndFlush(firstMessage);
+        });
     }
 
     @Override
