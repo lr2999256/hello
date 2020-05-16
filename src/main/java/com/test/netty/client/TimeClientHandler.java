@@ -7,11 +7,11 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 
 import java.util.stream.IntStream;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
 public class TimeClientHandler extends ChannelInboundHandlerAdapter {
 
     private final byte[] req = ("QUERY Time ORDER" + System.getProperty("line.separator")).getBytes();
+
+    private int counter;
 
     public TimeClientHandler() {
     }
@@ -27,11 +27,8 @@ public class TimeClientHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        ByteBuf buf = (ByteBuf) msg;
-        byte[] req =  new byte[buf.readableBytes()];
-        buf.readBytes(req);
-        String body = new String(req,UTF_8);
-        System.out.println("Now is : "+body);
+        String body = (String) msg;
+        System.out.println("Now is : "+body + " counter is "+ (++counter));
     }
 
     @Override
