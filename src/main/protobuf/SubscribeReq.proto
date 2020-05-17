@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package com.test.netty.protobuf;
+
+message SubScribeReq{
+    int32 subReqId = 1;
+    string userName = 2;
+    string productName = 3;
+    string address =4;
+}

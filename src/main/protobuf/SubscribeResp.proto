@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package com.test.netty.protobuf;
+
+message SubScribeResp{
+    int32 subReqId = 1;
+    string respCode = 2;
+    string desc = 3;
+}
