@@ -22,12 +22,12 @@ public class SubReqClientHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        String body = (String) msg;
-        System.out.println("Receive server message : ["+body + "]");
+        System.out.println("Receive server message : [" + msg + "]");
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        System.out.println(cause);
         ctx.close();
     }
 }
